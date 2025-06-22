@@ -36,13 +36,16 @@ uv run python searxng_cli.py search "neural networks" --category science
 
 ### Engine Management
 ```bash
-# List all available engines
+# List all available engines (compact overview)
 uv run python searxng_cli.py engines
 
-# List common engines only
+# List common engines only (clean 4-column layout)
 uv run python searxng_cli.py engines --common
 
 # List engines in specific category
+uv run python searxng_cli.py engines --category general
+
+# List only common engines in a category
 uv run python searxng_cli.py engines --category general --common
 
 # Search while disabling specific engines
@@ -116,8 +119,11 @@ uv run python searxng_cli.py engines --help
 # Test categories listing
 uv run python searxng_cli.py categories
 
-# Test engine listing
+# Test clean engine listing (shows popular engines in 4 columns)
 uv run python searxng_cli.py engines --common
+
+# Test engine overview (compact category summary)
+uv run python searxng_cli.py engines
 
 # Test simple search
 uv run python searxng_cli.py search "test query" --engines duckduckgo
