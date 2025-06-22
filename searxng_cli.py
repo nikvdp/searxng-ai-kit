@@ -228,6 +228,17 @@ def format_results_human(results_dict: Dict[str, Any]) -> None:
     
     # Display search info
     console.print(f"\n[bold blue]Search:[/bold blue] {search_info['q']}")
+    
+    # Show which engines were used
+    engines_used = set()
+    for result in results:
+        if result.get('engine'):
+            engines_used.add(result['engine'])
+    
+    if engines_used:
+        engines_str = ", ".join(sorted(engines_used))
+        console.print(f"[green]Engines:[/green] {engines_str}")
+    
     console.print(f"[dim]Language: {search_info['lang']}, Page: {search_info['pageno']}, Results: {len(results)}[/dim]\n")
     
     if not results:
@@ -293,6 +304,12 @@ def search(
             page=page,
             time_range=time_range,
         )
+        
+        # Show which engines will be used (for human-readable output)
+        if output_format.lower() != "json":
+            engine_names = [ref.name for ref in search_query.engineref_list]
+            if engine_names:
+                console.print(f"[dim]Using engines: {', '.join(sorted(engine_names))}[/dim]")
         
         # Perform search
         result_container = CLISearch(search_query).search()
@@ -388,8 +405,8 @@ def engines(
                 else:
                     console.print(f"[dim]{cat:<18}[/dim] {total_count} engines")
         
-        console.print(f"\n[dim]Use --category <name> to see engines in a specific category")
-        console.print(f"Use --common to show only popular engines[/dim]")
+        console.print(f"\n[dim]Use --category <name> to see engines in a specific category[/dim]")
+        console.print(f"[dim]Use --common to show only popular engines[/dim]")
 
 
 @app.command()
