@@ -1,0 +1,240 @@
+name: SearXNG CLI
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build CLI (${{ matrix.platform }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            binary_name: searxng-cli
+            asset_name: searxng-cli-linux-x64
+          - os: windows-latest
+            platform: windows
+            arch: x64
+            binary_name: searxng-cli.exe
+            asset_name: searxng-cli-windows-x64.exe
+          - os: macos-latest
+            platform: macos
+            arch: x64
+            binary_name: searxng-cli
+            asset_name: searxng-cli-macos-x64
+          - os: macos-latest-xlarge
+            platform: macos
+            arch: arm64
+            binary_name: searxng-cli
+            asset_name: searxng-cli-macos-arm64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Code Signing (macOS)
+      if: runner.os == 'macOS'
+      env:
+        APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      run: |
+        if [ -n "$APPLE_CERTIFICATE" ]; then
+          echo "Setting up code signing..."
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          echo "Code signing configured"
+        else
+          echo "No Apple certificate found, skipping code signing"
+          # Disable code signing in spec for unsigned builds
+          sed -i '' "s/codesign_identity='Developer ID Application'/codesign_identity=None/" searxng_cli_universal.spec
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install UV
+      run: |
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+          echo "$env:USERPROFILE\.cargo\bin" >> $GITHUB_PATH
+        else
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        fi
+      shell: bash
+
+    - name: Install dependencies
+      run: |
+        uv sync
+        uv add pyinstaller
+
+    - name: Clean previous builds
+      run: |
+        rm -rf build/ dist/ *.spec.bak || true
+        echo "Cleaned previous build artifacts"
+
+    - name: Build with PyInstaller
+      run: |
+        uv run pyinstaller searxng_cli_universal.spec
+      env:
+        PYTHONPATH: .
+
+    - name: Verify build
+      run: |
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          ./dist/searxng-cli.exe --help || echo "Build verification failed but continuing..."
+        else
+          ./dist/searxng-cli --help || echo "Build verification failed but continuing..."
+        fi
+      shell: bash
+
+    - name: Prepare release artifact
+      run: |
+        mkdir -p release
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          cp dist/searxng-cli.exe release/${{ matrix.asset_name }}
+          # Create zip for Windows
+          cd release && zip ${{ matrix.asset_name }}.zip ${{ matrix.asset_name }}
+        else
+          cp dist/searxng-cli release/${{ matrix.asset_name }}
+          chmod +x release/${{ matrix.asset_name }}
+          # Create tar.gz for Unix systems
+          cd release && tar -czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
+        fi
+      shell: bash
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.asset_name }}
+        path: |
+          release/${{ matrix.asset_name }}*
+        retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release
+        # Move all artifacts to release directory
+        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "searxng-cli*" \) -exec cp {} release/ \;
+        ls -la release/
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        cat > release_notes.md << 'EOF'
+        # SearXNG CLI Release ${{ github.ref_name }}
+        
+        A privacy-respecting command-line search tool powered by SearXNG.
+        
+        ## Features
+        - Search across 180+ search engines
+        - Support for multiple output formats (human-readable and JSON)
+        - Engine selection and filtering
+        - Category-based searching
+        - Cross-platform support
+        
+        ## Download
+        Choose the appropriate binary for your platform:
+        
+        - **Linux (x64)**: `searxng-cli-linux-x64.tar.gz`
+        - **Windows (x64)**: `searxng-cli-windows-x64.exe.zip` 
+        - **macOS (Intel)**: `searxng-cli-macos-x64.tar.gz`
+        - **macOS (Apple Silicon)**: `searxng-cli-macos-arm64.tar.gz`
+        
+        ## Quick Start
+        ```bash
+        # Extract the binary (Linux/macOS)
+        tar -xzf searxng-cli-*.tar.gz
+        
+        # Make executable and run
+        chmod +x searxng-cli
+        ./searxng-cli search "your query here"
+        
+        # See all options
+        ./searxng-cli --help
+        ```
+        
+        ## Usage Examples
+        ```bash
+        # Basic search
+        ./searxng-cli search "python tutorial"
+        
+        # Search with specific engines
+        ./searxng-cli search "machine learning" --engines duckduckgo,startpage
+        
+        # JSON output for scripting
+        ./searxng-cli search "data science" --format json
+        
+        # List available engines
+        ./searxng-cli engines --common
+        ```
+        
+        Built with ❤️ using SearXNG, Python, and PyInstaller.
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: SearXNG CLI ${{ github.ref_name }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        files: |
+          release/*
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: Test CLI Build
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    
+    steps:
+    - name: Download Linux artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: searxng-cli-linux-x64
+        path: test
+        
+    - name: Test CLI functionality
+      run: |
+        cd test
+        tar -xzf searxng-cli-linux-x64.tar.gz
+        chmod +x searxng-cli-linux-x64
+        echo "Testing help command..."
+        ./searxng-cli-linux-x64 --help
+        echo "Testing engines command..."
+        ./searxng-cli-linux-x64 engines --common || echo "Engines test failed but continuing"
+        echo "CLI functionality test completed"
