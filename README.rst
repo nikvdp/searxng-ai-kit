@@ -1,6 +1,34 @@
 .. SPDX-License-Identifier: AGPL-3.0-or-later
 
+SearXNG CLI
+===========
+
+**This is a fork of SearXNG focused on providing command-line interface functionality.**
+
+🔍 **Search from your terminal** using SearXNG's 180+ search engines
+
+📦 **Standalone binaries** for Linux, Windows, and macOS
+
+⚡ **Fast and private** - no tracking, no ads, just results
+
+**Quick Start:**
+
+.. code-block:: bash
+
+   # Search with multiple engines
+   searxng-cli search "machine learning" --engines duckduckgo,startpage
+   
+   # JSON output for scripting
+   searxng-cli search "python tutorial" --format json
+   
+   # List available engines
+   searxng-cli engines --common
+
+📖 **For complete CLI documentation, installation, and usage examples, see:** `README.cli.md <README.cli.md>`_
+
 ----
+
+**Original SearXNG Documentation Below**
 
 .. figure:: https://raw.githubusercontent.com/searxng/searxng/master/client/simple/src/brand/searxng.svg
    :target: https://docs.searxng.org/
