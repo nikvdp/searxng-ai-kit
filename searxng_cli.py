@@ -345,36 +345,51 @@ def engines(
     if category:
         if category not in engines_by_category:
             console.print(f"[red]Category '{category}' not found.[/red]")
-            console.print(f"Available categories: {', '.join(engines_by_category.keys())}")
+            console.print(f"Available categories: {', '.join(sorted(engines_by_category.keys()))}")
             raise typer.Exit(1)
         
-        console.print(f"\n[bold blue]Engines in category '{category}':[/bold blue]")
+        console.print(f"\n[bold blue]Engines in '{category}' category:[/bold blue]")
         engines_list = engines_by_category[category]
         if show_common:
             engines_list = [e for e in engines_list if e in COMMON_ENGINES]
         
-        for engine in sorted(engines_list):
-            marker = "⭐" if engine in COMMON_ENGINES else "  "
-            console.print(f"{marker} {engine}")
+        # Display engines in columns for better readability
+        engines_list = sorted(engines_list)
+        for i in range(0, len(engines_list), 3):
+            row_engines = engines_list[i:i+3]
+            formatted_engines = []
+            for engine in row_engines:
+                marker = "⭐" if engine in COMMON_ENGINES else " "
+                formatted_engines.append(f"{marker} {engine}")
+            console.print("  ".join(f"{engine:<25}" for engine in formatted_engines))
         console.print()
     else:
-        # Show all categories
-        table = Table(title="Available Search Engines by Category")
-        table.add_column("Category", style="cyan")
-        table.add_column("Engines", style="white")
-        
-        for cat, engines_list in sorted(engines_by_category.items()):
-            if show_common:
-                engines_list = [e for e in engines_list if e in COMMON_ENGINES]
+        # Show all engines in a compact format
+        if show_common:
+            console.print("\n[bold blue]Common Search Engines:[/bold blue]")
+            all_engines = []
+            for engines_list in engines_by_category.values():
+                all_engines.extend([e for e in engines_list if e in COMMON_ENGINES])
+            all_engines = sorted(set(all_engines))
             
-            engines_str = ", ".join(sorted(engines_list)[:10])  # Show first 10
-            if len(engines_list) > 10:
-                engines_str += f" ... (+{len(engines_list) - 10} more)"
-            
-            table.add_row(cat, engines_str)
+            # Display in 4 columns
+            for i in range(0, len(all_engines), 4):
+                row_engines = all_engines[i:i+4]
+                console.print("  ".join(f"⭐ {engine:<20}" for engine in row_engines))
+        else:
+            console.print("\n[bold blue]Search Engines by Category:[/bold blue]")
+            for cat in sorted(engines_by_category.keys()):
+                engines_list = sorted(engines_by_category[cat])
+                common_count = len([e for e in engines_list if e in COMMON_ENGINES])
+                total_count = len(engines_list)
+                
+                if common_count > 0:
+                    console.print(f"[cyan]{cat:<18}[/cyan] {total_count} engines ({common_count} common)")
+                else:
+                    console.print(f"[dim]{cat:<18}[/dim] {total_count} engines")
         
-        console.print(table)
-        console.print("\n[dim]⭐ = Common engines (use --common to filter)[/dim]")
+        console.print(f"\n[dim]Use --category <name> to see engines in a specific category")
+        console.print(f"Use --common to show only popular engines[/dim]")
 
 
 @app.command()
