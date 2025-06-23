@@ -66,6 +66,11 @@ hiddenimports = [
     'msgspec',
     'typer',
     'rich',
+    'mcp',
+    'mcp.server',
+    'mcp.server.stdio',
+    'mcp.types',
+    'asyncio',
 ]
 
 # Add all engine modules
