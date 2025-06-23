@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """SearXNG CLI - Command line interface for SearXNG search engine."""
 
+import asyncio
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -29,7 +32,7 @@ from uuid import uuid4
 
 app = typer.Typer(
     name="searxng-cli",
-    help="Privacy-respecting metasearch engine CLI",
+    help="Privacy-respecting metasearch engine CLI with MCP server support",
     no_args_is_help=True,
 )
 console = Console()
@@ -423,6 +426,266 @@ def categories():
         engine_count = len(engines_by_category[category])
         console.print(f"  • [cyan]{category}[/cyan] ({engine_count} engines)")
     console.print()
+
+
+# MCP Server Implementation
+async def fetch_url_content(url: str) -> Dict[str, Any]:
+    """Fetch URL content using Jina.ai's reader service."""
+    jina_url = f"https://r.jina.ai/{url}"
+    
+    # Use JINA_API_KEY environment variable if available
+    headers = {}
+    if os.environ.get("JINA_API_KEY"):
+        headers["Authorization"] = f"Bearer {os.environ['JINA_API_KEY']}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(jina_url, headers=headers)
+            response.raise_for_status()
+            
+            # Try to parse as JSON first
+            try:
+                content_data = response.json()
+                return {
+                    "success": True,
+                    "title": content_data.get("title", ""),
+                    "content": content_data.get("content", ""),
+                    "url": content_data.get("url", url),
+                    "timestamp": content_data.get("timestamp", ""),
+                }
+            except json.JSONDecodeError:
+                # If not JSON, return as plain text
+                return {
+                    "success": True,
+                    "title": "",
+                    "content": response.text,
+                    "url": url,
+                    "timestamp": "",
+                }
+    except httpx.HTTPError as e:
+        return {
+            "success": False,
+            "error": f"HTTP error: {str(e)}",
+            "url": url,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error fetching URL: {str(e)}",
+            "url": url,
+        }
+
+
+async def perform_search_async(
+    query: str,
+    category: str = "general",
+    engines: Optional[List[str]] = None,
+    language: str = "all",
+    safe_search: int = 0,
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """Async wrapper for search functionality."""
+    # Initialize SearXNG if not already done
+    if not initialize_searx():
+        return {"error": "Failed to initialize SearXNG"}
+    
+    try:
+        # Create search query
+        search_query = create_search_query(
+            query=query,
+            category=category,
+            engines=engines,
+            lang=language,
+            safe_search=safe_search,
+            page=1,
+        )
+        
+        # Perform search
+        result_container = CLISearch(search_query).search()
+        
+        # Get results
+        results = result_container.get_ordered_results()[:max_results]
+        
+        # Clean up results for JSON serialization
+        clean_results = []
+        for result in results:
+            clean_result = {
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": result.get("content", ""),
+                "engine": result.get("engine", ""),
+            }
+            clean_results.append(clean_result)
+        
+        return {
+            "success": True,
+            "query": query,
+            "category": category,
+            "engines_used": [ref.name for ref in search_query.engineref_list],
+            "results": clean_results,
+            "suggestions": list(result_container.suggestions),
+            "number_of_results": result_container.number_of_results,
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Search error: {str(e)}",
+            "query": query,
+        }
+
+
+@app.command()
+def mcp_server():
+    """Start the MCP server for Model Context Protocol integration.
+    
+    This starts an MCP server that communicates over stdio, providing web search
+    and URL content retrieval tools for AI applications like Claude.
+    
+    Available tools:
+    - web_search: Search using SearXNG's 180+ search engines
+    - fetch_url: Retrieve and extract content from URLs using Jina.ai
+    
+    Usage with Claude Desktop:
+    Add this to your claude_desktop_config.json:
+    {
+      "mcpServers": {
+        "searxng": {
+          "command": "/path/to/searxng-cli",
+          "args": ["mcp-server"]
+        }
+      }
+    }
+    
+    Environment variables:
+    - JINA_API_KEY: Optional API key for enhanced Jina.ai features
+    """
+    try:
+        from mcp.server import Server
+        from mcp.server.stdio import stdio_server
+        from mcp.types import Tool, TextContent
+        import mcp.server.stdio
+        import mcp.types
+    except ImportError:
+        console.print("[red]MCP library not found. Please install with: pip install mcp[/red]")
+        raise typer.Exit(1)
+    
+    # Create MCP server
+    server = Server("searxng-cli")
+    
+    @server.list_tools()
+    async def list_tools() -> list[Tool]:
+        """List available MCP tools."""
+        return [
+            Tool(
+                name="web_search",
+                description="Search the web using SearXNG's search engines",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query",
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Search category (general, images, videos, news, science, it)",
+                            "default": "general",
+                        },
+                        "engines": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of search engines to use",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return",
+                            "default": 10,
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Search language",
+                            "default": "all",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="fetch_url",
+                description="Fetch and extract content from a URL using Jina.ai's reader service",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "URL to fetch content from",
+                        },
+                    },
+                    "required": ["url"],
+                },
+            ),
+        ]
+    
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+        """Handle tool calls."""
+        if name == "web_search":
+            query = arguments.get("query")
+            category = arguments.get("category", "general")
+            engines = arguments.get("engines")
+            max_results = arguments.get("max_results", 10)
+            language = arguments.get("language", "all")
+            
+            result = await perform_search_async(
+                query=query,
+                category=category,
+                engines=engines,
+                language=language,
+                max_results=max_results,
+            )
+            
+            return [TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+            )]
+        
+        elif name == "fetch_url":
+            url = arguments.get("url")
+            if not url:
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({"error": "URL is required"})
+                )]
+            
+            result = await fetch_url_content(url)
+            return [TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+            )]
+        
+        else:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": f"Unknown tool: {name}"})
+            )]
+    
+    async def run_server():
+        """Run the MCP server."""
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    
+    # Run the server
+    console.print("[blue]Starting MCP server...[/blue]")
+    console.print("[dim]Server is running on stdio. Use Ctrl+C to stop.[/dim]", file=sys.stderr)
+    
+    try:
+        asyncio.run(run_server())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]MCP server stopped.[/yellow]", file=sys.stderr)
+    except Exception as e:
+        console.print(f"[red]Error running MCP server: {e}[/red]", file=sys.stderr)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
