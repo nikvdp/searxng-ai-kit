@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -685,26 +686,36 @@ def fetch_urls_command(
 
 
 @app.command()
-def mcp_server():
+def mcp_server(
+    remote: bool = typer.Option(False, "--remote", help="Start as remote HTTP server instead of stdio"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to (default: 0.0.0.0)"),
+    port: int = typer.Option(8000, "--port", help="Port to bind to (default: 8000)"),
+):
     """Start the MCP server for Model Context Protocol integration.
     
-    This starts an MCP server that communicates over stdio, providing web search
-    and URL content retrieval tools for AI applications like Claude.
+    This starts an MCP server that communicates over stdio by default, or over HTTP
+    when using the --remote flag. Provides web search and URL content retrieval 
+    tools for AI applications like Claude.
     
     Available tools:
     - web_search: Search using SearXNG's 180+ search engines
     - fetch_url: Retrieve and extract content from URL(s) using Jina.ai (supports arrays)
     
-    Usage with Claude Desktop:
+    Usage with Claude Desktop (stdio):
     Add this to your claude_desktop_config.json:
     {
       "mcpServers": {
         "searxng": {
-          "command": "/path/to/searxng-cli",
+          "command": "searxng",
           "args": ["mcp-server"]
         }
       }
     }
+    
+    Usage as remote HTTP server:
+    searxng mcp-server --remote --host 0.0.0.0 --port 8000
+    
+    Then connect MCP clients to: http://your-server:8000
     
     Environment variables:
     - JINA_API_KEY: Optional API key for enhanced Jina.ai features
@@ -850,16 +861,419 @@ def mcp_server():
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
     
-    # Run the server
-    console.print("[blue]Starting MCP server...[/blue]")
-    print("Server is running on stdio. Use Ctrl+C to stop.", file=sys.stderr)
-    
+    # Choose server type based on remote flag
+    if remote:
+        console.print(f"[blue]Starting MCP remote HTTP server on {host}:{port}...[/blue]")
+        asyncio.run(run_http_server(server, host, port))
+    else:
+        console.print("[blue]Starting MCP server on stdio...[/blue]")
+        print("Server is running on stdio. Use Ctrl+C to stop.", file=sys.stderr)
+        
+        try:
+            asyncio.run(run_server())
+        except KeyboardInterrupt:
+            print("\nMCP server stopped.", file=sys.stderr)
+        except Exception as e:
+            print(f"Error running MCP server: {e}", file=sys.stderr)
+            raise typer.Exit(1)
+
+
+async def run_http_server(mcp_server, host: str, port: int):
+    """Run the MCP server over HTTP with JSON-RPC 2.0 and SSE support."""
     try:
-        asyncio.run(run_server())
+        from fastapi import FastAPI, Request, HTTPException
+        from fastapi.responses import Response, StreamingResponse
+        from fastapi.middleware.cors import CORSMiddleware
+        from sse_starlette.sse import EventSourceResponse
+        import uvicorn
+    except ImportError:
+        console.print("[red]FastAPI and dependencies not found. Please install with: pip install fastapi uvicorn sse-starlette[/red]")
+        raise typer.Exit(1)
+    
+    # Store active sessions
+    sessions = {}
+    
+    app = FastAPI(
+        title="SearXNG MCP Server",
+        description="Model Context Protocol server for SearXNG search engine",
+        version="0.1.0"
+    )
+    
+    # Add CORS middleware for web clients
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Configure appropriately for production
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    def validate_origin(request: Request):
+        """Validate Origin header to prevent DNS rebinding attacks."""
+        origin = request.headers.get("origin")
+        if origin:
+            # For localhost/0.0.0.0, allow common variations
+            if host in ["127.0.0.1", "localhost", "0.0.0.0"]:
+                allowed_origins = [
+                    "http://localhost",
+                    "http://127.0.0.1",
+                    f"http://localhost:{port}",
+                    f"http://127.0.0.1:{port}"
+                ]
+                if not any(origin.startswith(allowed) for allowed in allowed_origins):
+                    raise HTTPException(status_code=403, detail="Forbidden origin")
+            elif not origin.startswith(f"http://{host}"):
+                raise HTTPException(status_code=403, detail="Forbidden origin")
+    
+    def create_jsonrpc_response(id: Any, result: Any = None, error: Any = None):
+        """Create a JSON-RPC 2.0 response."""
+        response = {"jsonrpc": "2.0", "id": id}
+        if error:
+            response["error"] = error
+        else:
+            response["result"] = result
+        return response
+    
+    def create_jsonrpc_error(code: int, message: str, data: Any = None):
+        """Create a JSON-RPC 2.0 error object."""
+        error = {"code": code, "message": message}
+        if data:
+            error["data"] = data
+        return error
+    
+    @app.get("/")
+    async def get_endpoint(request: Request):
+        """Handle GET requests for SSE stream or capabilities."""
+        validate_origin(request)
+        
+        accept = request.headers.get("accept", "")
+        if "text/event-stream" in accept:
+            # Start SSE stream
+            session_id = str(uuid.uuid4())
+            sessions[session_id] = {"created": datetime.now()}
+            
+            async def event_stream():
+                # Send initial endpoint event
+                yield {
+                    "event": "endpoint",
+                    "data": json.dumps({
+                        "method": "notifications/initialized",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {
+                                "tools": {
+                                    "listChanged": True
+                                }
+                            },
+                            "serverInfo": {
+                                "name": "searxng-cli",
+                                "version": "0.1.0"
+                            }
+                        }
+                    })
+                }
+                
+                # Keep connection alive
+                try:
+                    while True:
+                        await asyncio.sleep(30)
+                        yield {"event": "ping", "data": ""}
+                except asyncio.CancelledError:
+                    sessions.pop(session_id, None)
+                    return
+            
+            return EventSourceResponse(
+                event_stream(),
+                headers={"Mcp-Session-Id": session_id}
+            )
+        else:
+            # Return server capabilities
+            return {
+                "name": "searxng-cli",
+                "version": "0.1.0",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {}
+                },
+                "protocolVersion": "2024-11-05"
+            }
+    
+    @app.post("/register")
+    async def register_client(request: Request):
+        """Handle OAuth 2.0 dynamic client registration."""
+        validate_origin(request)
+        
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+        
+        # Simple client registration response
+        # In production, you'd validate and store client info
+        client_id = str(uuid.uuid4())
+        
+        return {
+            "client_id": client_id,
+            "client_id_issued_at": int(datetime.now().timestamp()),
+            "registration_access_token": str(uuid.uuid4()),
+            "registration_client_uri": f"http://{host}:{port}/register/{client_id}",
+            "grant_types": ["authorization_code"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none"  # No auth required for this demo
+        }
+    
+    @app.post("/")
+    async def post_endpoint(request: Request):
+        """Handle POST requests with JSON-RPC 2.0."""
+        validate_origin(request)
+        
+        try:
+            body = await request.json()
+        except Exception:
+            return Response(
+                content=json.dumps(create_jsonrpc_response(
+                    None, 
+                    error=create_jsonrpc_error(-32700, "Parse error")
+                )),
+                media_type="application/json",
+                status_code=400
+            )
+        
+        # Validate JSON-RPC 2.0 format
+        if not isinstance(body, dict) or body.get("jsonrpc") != "2.0":
+            return Response(
+                content=json.dumps(create_jsonrpc_response(
+                    body.get("id"),
+                    error=create_jsonrpc_error(-32600, "Invalid Request")
+                )),
+                media_type="application/json",
+                status_code=400
+            )
+        
+        method = body.get("method")
+        params = body.get("params", {})
+        request_id = body.get("id")
+        
+        # Generate session ID if not present
+        session_id = request.headers.get("mcp-session-id")
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            sessions[session_id] = {"created": datetime.now()}
+        
+        response_headers = {"Mcp-Session-Id": session_id}
+        
+        try:
+            if method == "initialize":
+                result = {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {
+                            "listChanged": True
+                        }
+                    },
+                    "serverInfo": {
+                        "name": "searxng-cli",
+                        "version": "0.1.0"
+                    }
+                }
+                
+            elif method == "tools/list":
+                # Call the list_tools handler directly
+                from mcp.types import Tool
+                tools = [
+                    Tool(
+                        name="web_search",
+                        description="Search the web using SearXNG's search engines",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Search query",
+                                },
+                                "category": {
+                                    "type": "string",
+                                    "description": "Search category (general, images, videos, news, science, it)",
+                                    "default": "general",
+                                },
+                                "engines": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "List of search engines to use",
+                                },
+                                "max_results": {
+                                    "type": "integer",
+                                    "description": "Maximum number of results to return",
+                                    "default": 10,
+                                },
+                                "language": {
+                                    "type": "string",
+                                    "description": "Search language",
+                                    "default": "all",
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    ),
+                    Tool(
+                        name="fetch_url",
+                        description="Fetch and extract content from URL(s) using Jina.ai's reader service. Supports single URL or array of URLs for parallel fetching.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "url": {
+                                    "oneOf": [
+                                        {
+                                            "type": "string",
+                                            "description": "Single URL to fetch content from"
+                                        },
+                                        {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Array of URLs to fetch content from in parallel"
+                                        }
+                                    ],
+                                    "description": "URL or array of URLs to fetch content from",
+                                },
+                            },
+                            "required": ["url"],
+                        },
+                    ),
+                ]
+                result = {
+                    "tools": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "inputSchema": tool.inputSchema
+                        }
+                        for tool in tools
+                    ]
+                }
+                
+            elif method == "notifications/initialized":
+                # Client is notifying that it has initialized
+                # For notifications (id is null), we should return 204 No Content
+                if request_id is None:
+                    return Response(status_code=204, headers=response_headers)
+                else:
+                    result = {"status": "initialized"}
+                
+            elif method == "tools/call":
+                tool_name = params.get("name")
+                arguments = params.get("arguments", {})
+                
+                if not tool_name:
+                    return Response(
+                        content=json.dumps(create_jsonrpc_response(
+                            request_id,
+                            error=create_jsonrpc_error(-32602, "Invalid params: missing tool name")
+                        )),
+                        media_type="application/json",
+                        status_code=400,
+                        headers=response_headers
+                    )
+                
+                # Call tool functions directly
+                if tool_name == "web_search":
+                    query = arguments.get("query")
+                    category = arguments.get("category", "general")
+                    engines = arguments.get("engines")
+                    max_results = arguments.get("max_results", 10)
+                    language = arguments.get("language", "all")
+                    
+                    search_result = await perform_search_async(
+                        query=query,
+                        category=category,
+                        engines=engines,
+                        language=language,
+                        max_results=max_results,
+                    )
+                    
+                    content_text = json.dumps(search_result, indent=2, ensure_ascii=False, default=json_serial)
+                    
+                elif tool_name == "fetch_url":
+                    url_input = arguments.get("url")
+                    if not url_input:
+                        content_text = json.dumps({"error": "URL is required"})
+                    elif isinstance(url_input, list):
+                        # Multiple URLs - use parallel fetching
+                        if not url_input:
+                            content_text = json.dumps({"error": "URL array cannot be empty"})
+                        else:
+                            fetch_result = await fetch_multiple_urls_async(url_input)
+                            content_text = json.dumps(fetch_result, indent=2, ensure_ascii=False, default=json_serial)
+                    else:
+                        # Single URL - use existing function
+                        fetch_result = await fetch_url_content(url_input)
+                        content_text = json.dumps(fetch_result, indent=2, ensure_ascii=False, default=json_serial)
+                
+                else:
+                    return Response(
+                        content=json.dumps(create_jsonrpc_response(
+                            request_id,
+                            error=create_jsonrpc_error(-32601, f"Unknown tool: {tool_name}")
+                        )),
+                        media_type="application/json",
+                        status_code=404,
+                        headers=response_headers
+                    )
+                
+                result = {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": content_text
+                        }
+                    ]
+                }
+                
+            else:
+                return Response(
+                    content=json.dumps(create_jsonrpc_response(
+                        request_id,
+                        error=create_jsonrpc_error(-32601, f"Method not found: {method}")
+                    )),
+                    media_type="application/json",
+                    status_code=404,
+                    headers=response_headers
+                )
+            
+            return Response(
+                content=json.dumps(create_jsonrpc_response(request_id, result), 
+                                 ensure_ascii=False, default=json_serial),
+                media_type="application/json",
+                headers=response_headers
+            )
+            
+        except Exception as e:
+            console.print(f"[red]Error handling request: {e}[/red]")
+            return Response(
+                content=json.dumps(create_jsonrpc_response(
+                    request_id,
+                    error=create_jsonrpc_error(-32603, f"Internal error: {str(e)}")
+                )),
+                media_type="application/json",
+                status_code=500,
+                headers=response_headers
+            )
+    
+    # Start server
+    print(f"MCP HTTP server starting on {host}:{port}", file=sys.stderr)
+    try:
+        config = uvicorn.Config(
+            app=app,
+            host=host,
+            port=port,
+            log_level="info",
+            access_log=False
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
     except KeyboardInterrupt:
-        print("\nMCP server stopped.", file=sys.stderr)
+        print("\nMCP HTTP server stopped.", file=sys.stderr)
     except Exception as e:
-        print(f"Error running MCP server: {e}", file=sys.stderr)
+        print(f"Error running MCP HTTP server: {e}", file=sys.stderr)
         raise typer.Exit(1)
 
 
