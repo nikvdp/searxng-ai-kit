@@ -476,6 +476,76 @@ async def fetch_url_content(url: str) -> Dict[str, Any]:
         }
 
 
+async def fetch_multiple_urls_async(urls: List[str]) -> List[Dict[str, Any]]:
+    """Fetch multiple URLs in parallel using existing network infrastructure, preserving order."""
+    if not urls:
+        return []
+    
+    # Import here to avoid circular imports
+    from searx.network import Request, multi_requests
+    
+    # Use JINA_API_KEY environment variable if available
+    headers = {}
+    if os.environ.get("JINA_API_KEY"):
+        headers["Authorization"] = f"Bearer {os.environ['JINA_API_KEY']}"
+    
+    # Create requests for all URLs
+    requests = []
+    for url in urls:
+        jina_url = f"https://r.jina.ai/{url}"
+        requests.append(Request.get(jina_url, headers=headers, timeout=30.0))
+    
+    # Execute requests in parallel
+    responses = multi_requests(requests)
+    
+    # Process responses while preserving order
+    results = []
+    for i, (url, response) in enumerate(zip(urls, responses)):
+        if isinstance(response, Exception):
+            # Handle errors
+            results.append({
+                "success": False,
+                "error": f"Error fetching URL: {str(response)}",
+                "url": url,
+                "index": i,
+            })
+        else:
+            try:
+                # Check if request was successful
+                response.raise_for_status()
+                
+                # Try to parse as JSON first
+                try:
+                    content_data = response.json()
+                    results.append({
+                        "success": True,
+                        "title": content_data.get("title", ""),
+                        "content": content_data.get("content", ""),
+                        "url": content_data.get("url", url),
+                        "timestamp": content_data.get("timestamp", ""),
+                        "index": i,
+                    })
+                except json.JSONDecodeError:
+                    # If not JSON, return as plain text
+                    results.append({
+                        "success": True,
+                        "title": "",
+                        "content": response.text,
+                        "url": url,
+                        "timestamp": "",
+                        "index": i,
+                    })
+            except Exception as e:
+                results.append({
+                    "success": False,
+                    "error": f"HTTP error: {str(e)}",
+                    "url": url,
+                    "index": i,
+                })
+    
+    return results
+
+
 async def perform_search_async(
     query: str,
     category: str = "general",
@@ -535,6 +605,89 @@ async def perform_search_async(
         }
 
 
+@app.command("fetch-urls")
+def fetch_urls_command(
+    urls: List[str] = typer.Argument(..., help="URLs to fetch content from"),
+    output_format: str = typer.Option("json", "--format", "-f", help="Output format: json or human"),
+    max_concurrent: int = typer.Option(5, "--concurrent", "-c", help="Maximum number of concurrent requests"),
+):
+    """Fetch content from multiple URLs in parallel using Jina.ai's reader service.
+    
+    This command fetches content from one or more URLs concurrently, maintaining the 
+    order of results to match the input order. Each URL is processed through Jina.ai's
+    reader service to extract clean, readable content.
+    
+    Examples:
+    
+    # Fetch single URL
+    searxng-cli fetch-urls "https://example.com"
+    
+    # Fetch multiple URLs in parallel  
+    searxng-cli fetch-urls "https://site1.com" "https://site2.com" "https://site3.com"
+    
+    # Output in human-readable format
+    searxng-cli fetch-urls "https://example.com" --format human
+    
+    # Control concurrency
+    searxng-cli fetch-urls url1 url2 url3 --concurrent 2
+    
+    Environment variables:
+    - JINA_API_KEY: Optional API key for enhanced Jina.ai features
+    """
+    if not urls:
+        console.print("[red]Error: At least one URL is required[/red]")
+        raise typer.Exit(1)
+    
+    # Limit concurrent requests to reasonable number
+    if max_concurrent > 20:
+        console.print("[yellow]Warning: Limiting concurrent requests to 20 for stability[/yellow]")
+        max_concurrent = 20
+    
+    try:
+        if len(urls) == 1:
+            # Single URL - use existing async function but run it
+            import asyncio
+            result = asyncio.run(fetch_url_content(urls[0]))
+            results = [result]
+        else:
+            # Multiple URLs - use parallel fetching
+            import asyncio
+            results = asyncio.run(fetch_multiple_urls_async(urls))
+        
+        if output_format.lower() == "json":
+            # JSON output
+            output = json.dumps(results, indent=2, ensure_ascii=False, default=json_serial)
+            console.print(output)
+        else:
+            # Human-readable output
+            for i, result in enumerate(results):
+                if result.get("success"):
+                    console.print(f"\n[bold green]✓ URL {i+1}:[/bold green] {result['url']}")
+                    if result.get("title"):
+                        console.print(f"[bold]Title:[/bold] {result['title']}")
+                    if result.get("content"):
+                        # Truncate very long content for readability
+                        content = result['content']
+                        if len(content) > 1000:
+                            content = content[:1000] + "... [truncated]"
+                        console.print(f"[bold]Content:[/bold] {content}")
+                    if result.get("timestamp"):
+                        console.print(f"[dim]Timestamp: {result['timestamp']}[/dim]")
+                else:
+                    console.print(f"\n[bold red]✗ URL {i+1}:[/bold red] {result['url']}")
+                    console.print(f"[red]Error: {result.get('error', 'Unknown error')}[/red]")
+                
+                if i < len(results) - 1:  # Add separator between results
+                    console.print("[dim]" + "─" * 50 + "[/dim]")
+                    
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error fetching URLs: {e}[/red]")
+        raise typer.Exit(1)
+
+
 @app.command()
 def mcp_server():
     """Start the MCP server for Model Context Protocol integration.
@@ -544,7 +697,7 @@ def mcp_server():
     
     Available tools:
     - web_search: Search using SearXNG's 180+ search engines
-    - fetch_url: Retrieve and extract content from URLs using Jina.ai
+    - fetch_url: Retrieve and extract content from URL(s) using Jina.ai (supports arrays)
     
     Usage with Claude Desktop:
     Add this to your claude_desktop_config.json:
@@ -613,13 +766,23 @@ def mcp_server():
             ),
             Tool(
                 name="fetch_url",
-                description="Fetch and extract content from a URL using Jina.ai's reader service",
+                description="Fetch and extract content from URL(s) using Jina.ai's reader service. Supports single URL or array of URLs for parallel fetching.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "url": {
-                            "type": "string",
-                            "description": "URL to fetch content from",
+                            "oneOf": [
+                                {
+                                    "type": "string",
+                                    "description": "Single URL to fetch content from"
+                                },
+                                {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Array of URLs to fetch content from in parallel"
+                                }
+                            ],
+                            "description": "URL or array of URLs to fetch content from",
                         },
                     },
                     "required": ["url"],
@@ -651,18 +814,34 @@ def mcp_server():
             )]
         
         elif name == "fetch_url":
-            url = arguments.get("url")
-            if not url:
+            url_input = arguments.get("url")
+            if not url_input:
                 return [TextContent(
                     type="text",
                     text=json.dumps({"error": "URL is required"})
                 )]
             
-            result = await fetch_url_content(url)
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
-            )]
+            # Handle both single URL and array of URLs
+            if isinstance(url_input, list):
+                # Multiple URLs - use parallel fetching
+                if not url_input:
+                    return [TextContent(
+                        type="text",
+                        text=json.dumps({"error": "URL array cannot be empty"})
+                    )]
+                
+                result = await fetch_multiple_urls_async(url_input)
+                return [TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+                )]
+            else:
+                # Single URL - use existing function
+                result = await fetch_url_content(url_input)
+                return [TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+                )]
         
         else:
             return [TextContent(
@@ -677,14 +856,14 @@ def mcp_server():
     
     # Run the server
     console.print("[blue]Starting MCP server...[/blue]")
-    console.print("[dim]Server is running on stdio. Use Ctrl+C to stop.[/dim]", file=sys.stderr)
+    print("Server is running on stdio. Use Ctrl+C to stop.", file=sys.stderr)
     
     try:
         asyncio.run(run_server())
     except KeyboardInterrupt:
-        console.print("\n[yellow]MCP server stopped.[/yellow]", file=sys.stderr)
+        print("\nMCP server stopped.", file=sys.stderr)
     except Exception as e:
-        console.print(f"[red]Error running MCP server: {e}[/red]", file=sys.stderr)
+        print(f"Error running MCP server: {e}", file=sys.stderr)
         raise typer.Exit(1)
 
 

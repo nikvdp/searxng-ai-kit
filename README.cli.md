@@ -79,6 +79,24 @@ uv run python searxng_cli.py search "tech news" --time week --category news
 uv run python searxng_cli.py search "javascript" --page 2
 ```
 
+### URL Content Retrieval
+```bash
+# Fetch content from a single URL
+uv run python searxng_cli.py fetch-urls "https://example.com"
+
+# Fetch content from multiple URLs in parallel
+uv run python searxng_cli.py fetch-urls "https://site1.com" "https://site2.com" "https://site3.com"
+
+# Human-readable output format
+uv run python searxng_cli.py fetch-urls "https://example.com" --format human
+
+# Control concurrency for rate limiting
+uv run python searxng_cli.py fetch-urls url1 url2 url3 --concurrent 2
+
+# JSON output for scripting
+uv run python searxng_cli.py fetch-urls "https://docs.python.org" --format json > content.json
+```
+
 ### Browse Available Options
 ```bash
 # List all search categories
@@ -169,6 +187,44 @@ uv run pyinstaller searxng_cli.spec
 ```
 
 **Note:** The executable may have some engine loading issues. The Python version is recommended for full functionality.
+
+## MCP Server Integration
+
+SearXNG CLI includes a Model Context Protocol (MCP) server for AI application integration. This allows AI assistants like Claude to search the web and fetch URL content directly.
+
+### Starting the MCP Server
+```bash
+# Start the MCP server (runs until Ctrl+C)
+uv run python searxng_cli.py mcp-server
+```
+
+### Available MCP Tools
+
+1. **web_search**: Search using SearXNG's 180+ search engines
+   - Supports all search parameters (query, category, engines, language, etc.)
+   - Returns structured JSON results
+
+2. **fetch_url**: Retrieve and extract content from URL(s) using Jina.ai
+   - **Single URL**: `{"url": "https://example.com"}`
+   - **Multiple URLs (parallel)**: `{"url": ["https://site1.com", "https://site2.com"]}`
+   - Maintains order of results when using arrays
+   - Handles errors gracefully while preserving partial results
+
+### Claude Desktop Configuration
+Add this to your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "/path/to/searxng-cli",
+      "args": ["mcp-server"]
+    }
+  }
+}
+```
+
+### Environment Variables
+- `JINA_API_KEY`: Optional API key for enhanced Jina.ai URL reading features
 
 ## Troubleshooting
 
