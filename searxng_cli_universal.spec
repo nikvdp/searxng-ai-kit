@@ -11,7 +11,7 @@ sys.path.insert(0, os.getcwd())
 block_cipher = None
 
 # Cross-platform binary name
-binary_name = 'searxng-cli'
+binary_name = 'searxng'
 if sys.platform.startswith('win'):
     binary_name += '.exe'
 
