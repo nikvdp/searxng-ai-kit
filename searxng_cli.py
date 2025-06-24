@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 import typer
@@ -432,7 +433,9 @@ def categories():
 # MCP Server Implementation
 async def fetch_url_content(url: str) -> Dict[str, Any]:
     """Fetch URL content using Jina.ai's reader service."""
-    jina_url = f"https://r.jina.ai/{url}"
+    # Properly encode the URL to handle special characters and parameters
+    encoded_url = quote(url, safe='')
+    jina_url = f"https://r.jina.ai/{encoded_url}"
     
     # Use JINA_API_KEY environment variable if available
     headers = {}
@@ -493,7 +496,9 @@ async def fetch_multiple_urls_async(urls: List[str]) -> List[Dict[str, Any]]:
     # Create requests for all URLs
     requests = []
     for url in urls:
-        jina_url = f"https://r.jina.ai/{url}"
+        # Properly encode the URL to handle special characters and parameters
+        encoded_url = quote(url, safe='')
+        jina_url = f"https://r.jina.ai/{encoded_url}"
         requests.append(Request.get(jina_url, headers=headers, timeout=30.0))
     
     # Execute requests in parallel
@@ -685,6 +690,123 @@ def fetch_urls_command(
         raise typer.Exit(1)
 
 
+def get_mcp_tools():
+    """Get the list of MCP tools available."""
+    from mcp.types import Tool
+    return [
+        Tool(
+            name="web_search",
+            description="Search the web using SearXNG's search engines",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Search category (general, images, videos, news, science, it)",
+                        "default": "general",
+                    },
+                    "engines": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of search engines to use",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return",
+                        "default": 10,
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Search language",
+                        "default": "all",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="fetch_url",
+            description="Fetch and extract content from a single URL using Jina.ai's reader service.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to fetch content from"
+                    },
+                },
+                "required": ["url"],
+            },
+        ),
+        Tool(
+            name="fetch_urls",
+            description="Fetch and extract content from multiple URLs in parallel using Jina.ai's reader service.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of URLs to fetch content from in parallel"
+                    },
+                },
+                "required": ["urls"],
+            },
+        ),
+    ]
+
+
+async def handle_tool_call(name: str, arguments: dict):
+    """Shared tool call handler for both stdio and HTTP versions."""
+    if name == "web_search":
+        query = arguments.get("query")
+        category = arguments.get("category", "general")
+        engines = arguments.get("engines")
+        max_results = arguments.get("max_results", 10)
+        language = arguments.get("language", "all")
+        
+        result = await perform_search_async(
+            query=query,
+            category=category,
+            engines=engines,
+            language=language,
+            max_results=max_results,
+        )
+        
+        return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+    
+    elif name == "fetch_url":
+        url = arguments.get("url")
+        if not url:
+            return json.dumps({"error": "URL is required"})
+        
+        # Single URL
+        result = await fetch_url_content(url)
+        return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+    
+    elif name == "fetch_urls":
+        urls = arguments.get("urls")
+        if not urls:
+            return json.dumps({"error": "URLs array is required"})
+        
+        if not isinstance(urls, list):
+            return json.dumps({"error": "URLs must be an array"})
+        
+        if not urls:
+            return json.dumps({"error": "URLs array cannot be empty"})
+        
+        # Multiple URLs - use parallel fetching
+        result = await fetch_multiple_urls_async(urls)
+        return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+    
+    else:
+        return json.dumps({"error": f"Unknown tool: {name}"})
+
+
 @app.command()
 def mcp_server(
     remote: bool = typer.Option(False, "--remote", help="Start as remote HTTP server instead of stdio"),
@@ -729,132 +851,20 @@ def mcp_server(
     except ImportError:
         console.print("[red]MCP library not found. Please install with: pip install mcp[/red]")
         raise typer.Exit(1)
-    
+
     # Create MCP server
     server = Server("searxng-cli")
     
     @server.list_tools()
     async def list_tools() -> list[Tool]:
         """List available MCP tools."""
-        return [
-            Tool(
-                name="web_search",
-                description="Search the web using SearXNG's search engines",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query",
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "Search category (general, images, videos, news, science, it)",
-                            "default": "general",
-                        },
-                        "engines": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of search engines to use",
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return",
-                            "default": 10,
-                        },
-                        "language": {
-                            "type": "string",
-                            "description": "Search language",
-                            "default": "all",
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="fetch_url",
-                description="Fetch and extract content from URL(s) using Jina.ai's reader service. Supports single URL or array of URLs for parallel fetching.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "oneOf": [
-                                {
-                                    "type": "string",
-                                    "description": "Single URL to fetch content from"
-                                },
-                                {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Array of URLs to fetch content from in parallel"
-                                }
-                            ],
-                            "description": "URL or array of URLs to fetch content from",
-                        },
-                    },
-                    "required": ["url"],
-                },
-            ),
-        ]
-    
+        return get_mcp_tools()
+
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        """Handle tool calls."""
-        if name == "web_search":
-            query = arguments.get("query")
-            category = arguments.get("category", "general")
-            engines = arguments.get("engines")
-            max_results = arguments.get("max_results", 10)
-            language = arguments.get("language", "all")
-            
-            result = await perform_search_async(
-                query=query,
-                category=category,
-                engines=engines,
-                language=language,
-                max_results=max_results,
-            )
-            
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
-            )]
-        
-        elif name == "fetch_url":
-            url_input = arguments.get("url")
-            if not url_input:
-                return [TextContent(
-                    type="text",
-                    text=json.dumps({"error": "URL is required"})
-                )]
-            
-            # Handle both single URL and array of URLs
-            if isinstance(url_input, list):
-                # Multiple URLs - use parallel fetching
-                if not url_input:
-                    return [TextContent(
-                        type="text",
-                        text=json.dumps({"error": "URL array cannot be empty"})
-                    )]
-                
-                result = await fetch_multiple_urls_async(url_input)
-                return [TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
-                )]
-            else:
-                # Single URL - use existing function
-                result = await fetch_url_content(url_input)
-                return [TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
-                )]
-        
-        else:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"error": f"Unknown tool: {name}"})
-            )]
+        """Handle tool calls for stdio version."""
+        content_text = await handle_tool_call(name, arguments)
+        return [TextContent(type="text", text=content_text)]
     
     async def run_server():
         """Run the MCP server."""
@@ -1078,68 +1088,8 @@ async def run_http_server(mcp_server, host: str, port: int):
                 }
                 
             elif method == "tools/list":
-                # Call the list_tools handler directly
-                from mcp.types import Tool
-                tools = [
-                    Tool(
-                        name="web_search",
-                        description="Search the web using SearXNG's search engines",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search query",
-                                },
-                                "category": {
-                                    "type": "string",
-                                    "description": "Search category (general, images, videos, news, science, it)",
-                                    "default": "general",
-                                },
-                                "engines": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "List of search engines to use",
-                                },
-                                "max_results": {
-                                    "type": "integer",
-                                    "description": "Maximum number of results to return",
-                                    "default": 10,
-                                },
-                                "language": {
-                                    "type": "string",
-                                    "description": "Search language",
-                                    "default": "all",
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    ),
-                    Tool(
-                        name="fetch_url",
-                        description="Fetch and extract content from URL(s) using Jina.ai's reader service. Supports single URL or array of URLs for parallel fetching.",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "url": {
-                                    "oneOf": [
-                                        {
-                                            "type": "string",
-                                            "description": "Single URL to fetch content from"
-                                        },
-                                        {
-                                            "type": "array",
-                                            "items": {"type": "string"},
-                                            "description": "Array of URLs to fetch content from in parallel"
-                                        }
-                                    ],
-                                    "description": "URL or array of URLs to fetch content from",
-                                },
-                            },
-                            "required": ["url"],
-                        },
-                    ),
-                ]
+                # Use shared tool definitions
+                tools = get_mcp_tools()
                 result = {
                     "tools": [
                         {
@@ -1174,50 +1124,24 @@ async def run_http_server(mcp_server, host: str, port: int):
                         headers=response_headers
                     )
                 
-                # Call tool functions directly
-                if tool_name == "web_search":
-                    query = arguments.get("query")
-                    category = arguments.get("category", "general")
-                    engines = arguments.get("engines")
-                    max_results = arguments.get("max_results", 10)
-                    language = arguments.get("language", "all")
-                    
-                    search_result = await perform_search_async(
-                        query=query,
-                        category=category,
-                        engines=engines,
-                        language=language,
-                        max_results=max_results,
-                    )
-                    
-                    content_text = json.dumps(search_result, indent=2, ensure_ascii=False, default=json_serial)
-                    
-                elif tool_name == "fetch_url":
-                    url_input = arguments.get("url")
-                    if not url_input:
-                        content_text = json.dumps({"error": "URL is required"})
-                    elif isinstance(url_input, list):
-                        # Multiple URLs - use parallel fetching
-                        if not url_input:
-                            content_text = json.dumps({"error": "URL array cannot be empty"})
-                        else:
-                            fetch_result = await fetch_multiple_urls_async(url_input)
-                            content_text = json.dumps(fetch_result, indent=2, ensure_ascii=False, default=json_serial)
-                    else:
-                        # Single URL - use existing function
-                        fetch_result = await fetch_url_content(url_input)
-                        content_text = json.dumps(fetch_result, indent=2, ensure_ascii=False, default=json_serial)
+                # Use shared tool handler
+                content_text = await handle_tool_call(tool_name, arguments)
                 
-                else:
-                    return Response(
-                        content=json.dumps(create_jsonrpc_response(
-                            request_id,
-                            error=create_jsonrpc_error(-32601, f"Unknown tool: {tool_name}")
-                        )),
-                        media_type="application/json",
-                        status_code=404,
-                        headers=response_headers
-                    )
+                # Check for error responses
+                try:
+                    result_data = json.loads(content_text)
+                    if isinstance(result_data, dict) and "error" in result_data and result_data.get("error", "").startswith("Unknown tool:"):
+                        return Response(
+                            content=json.dumps(create_jsonrpc_response(
+                                request_id,
+                                error=create_jsonrpc_error(-32601, result_data["error"])
+                            )),
+                            media_type="application/json",
+                            status_code=404,
+                            headers=response_headers
+                        )
+                except json.JSONDecodeError:
+                    pass  # Content is not JSON, treat as regular response
                 
                 result = {
                     "content": [
