@@ -191,11 +191,11 @@ To create a standalone executable:
 pip install pyinstaller
 
 # Build with PyInstaller
-pyinstaller searxng_cli.spec
+pyinstaller searxng.spec
 
 # Test the executable
-./dist/searxng-cli --help
-./dist/searxng-cli search "test" --engines duckduckgo
+./dist/searxng --help
+./dist/searxng search "test" --engines duckduckgo
 ```
 
 **Note:** The executable may have some engine loading issues. The Python version is recommended for full functionality.
