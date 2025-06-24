@@ -27,3 +27,4 @@ searx/version_frozen.py
 
 .python-version
 venv/
+devlog/
