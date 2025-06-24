@@ -11,18 +11,28 @@ SearXNG CLI
 
 ⚡ **Fast and private** - no tracking, no ads, just results
 
+**Installation:**
+
+.. code-block:: bash
+
+   # Install from source
+   pip install .
+   
+   # Or with uv
+   uv pip install .
+
 **Quick Start:**
 
 .. code-block:: bash
 
    # Search with multiple engines
-   searxng-cli search "machine learning" --engines duckduckgo,startpage
+   searxng search "machine learning" --engines duckduckgo,startpage
    
    # JSON output for scripting
-   searxng-cli search "python tutorial" --format json
+   searxng search "python tutorial" --format json
    
    # List available engines
-   searxng-cli engines --common
+   searxng engines --common
 
 📖 **For complete CLI documentation, installation, and usage examples, see:** `README.cli.md <README.cli.md>`_
 

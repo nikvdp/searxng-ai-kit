@@ -863,5 +863,10 @@ def mcp_server():
         raise typer.Exit(1)
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the CLI."""
     app()
+
+
+if __name__ == "__main__":
+    main()

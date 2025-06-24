@@ -1,8 +1,8 @@
 [project]
-name = "searxng"
+name = "searxng-cli"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+description = "Command-line interface for SearXNG privacy-respecting metasearch engine"
+readme = "README.rst"
 requires-python = ">=3.11"
 dependencies = [
     "babel==2.17.0",
@@ -31,10 +31,18 @@ dependencies = [
     "uvloop==0.21.0",
 ]
 
-[tool.uv]
-dev-dependencies = [
-    "searxng",
-]
+[project.scripts]
+searxng = "searxng_cli:main"
 
-[tool.uv.sources]
-searxng = { workspace = true }
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["searx*"]
+
+[tool.setuptools]
+py-modules = ["searxng_cli"]
+
+[tool.uv]
+dev-dependencies = []
