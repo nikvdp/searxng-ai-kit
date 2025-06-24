@@ -5,16 +5,24 @@ SearXNG CLI
 
 **This is a fork of SearXNG focused on providing command-line interface functionality.**
 
-🔍 **Search from your terminal** using SearXNG's 180+ search engines
+🔍 **CLI tool** - Search from your terminal using SearXNG's 180+ search engines
 
-📦 **Standalone binaries** for Linux, Windows, and macOS
+🐍 **Python library** - Programmatic search and URL content retrieval
 
-⚡ **Fast and private** - no tracking, no ads, just results
+🔌 **MCP server** - AI assistant integration with stdio and HTTP modes
+
+📦 **Standalone binaries** - Pre-built executables for Linux, Windows, and macOS
+
+⚡ **Fast and private** - No tracking, no ads, just results
 
 **Installation:**
 
 .. code-block:: bash
 
+   # Clone the repository
+   git clone https://github.com/nikvdp/searxng-cli
+   cd searxng-cli
+   
    # Install from source
    pip install .
    
@@ -25,16 +33,20 @@ SearXNG CLI
 
 .. code-block:: bash
 
-   # Search with multiple engines
+   # CLI: Search with multiple engines
    searxng search "machine learning" --engines duckduckgo,startpage
    
    # JSON output for scripting
    searxng search "python tutorial" --format json
    
-   # List available engines
-   searxng engines --common
+   # Library: Use in Python code
+   import searxng
+   results = searxng.search("python tutorial")
+   
+   # MCP Server: For AI assistant integration
+   searxng mcp-server
 
-📖 **For complete CLI documentation, installation, and usage examples, see:** `README.cli.md <README.cli.md>`_
+📖 **For complete documentation, see:** `README.cli.md <README.cli.md>`_
 
 ----
 
