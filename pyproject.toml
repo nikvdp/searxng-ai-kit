@@ -44,5 +44,28 @@ include = ["searx*"]
 [tool.setuptools]
 py-modules = ["searxng_cli"]
 
+[tool.setuptools.package-data]
+searx = [
+    "settings.yml",
+    "*.toml",
+    "*.msg",
+    "search/checker/scheduler.lua",
+    "data/*.json",
+    "data/*.txt",
+    "data/*.ftz",
+    "favicons/*.toml",
+    "infopage/*/*",
+    "static/themes/simple/css/*",
+    "static/themes/simple/css/*/*",
+    "static/themes/simple/img/*",
+    "static/themes/simple/js/*",
+    "static/themes/simple/*.json",
+    "templates/*/*",
+    "templates/*/*/*",
+    "translations/*",
+    "translations/*/*",
+    "translations/*/*/*",
+]
+
 [tool.uv]
 dev-dependencies = []
