@@ -608,7 +608,7 @@ async def perform_search_async(
 @app.command("fetch-urls")
 def fetch_urls_command(
     urls: List[str] = typer.Argument(..., help="URLs to fetch content from"),
-    output_format: str = typer.Option("json", "--format", "-f", help="Output format: json or human"),
+    output_format: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
     max_concurrent: int = typer.Option(5, "--concurrent", "-c", help="Maximum number of concurrent requests"),
 ):
     """Fetch content from multiple URLs in parallel using Jina.ai's reader service.
@@ -666,11 +666,7 @@ def fetch_urls_command(
                     if result.get("title"):
                         console.print(f"[bold]Title:[/bold] {result['title']}")
                     if result.get("content"):
-                        # Truncate very long content for readability
-                        content = result['content']
-                        if len(content) > 1000:
-                            content = content[:1000] + "... [truncated]"
-                        console.print(f"[bold]Content:[/bold] {content}")
+                        console.print(f"[bold]Content:[/bold] {result['content']}")
                     if result.get("timestamp"):
                         console.print(f"[dim]Timestamp: {result['timestamp']}[/dim]")
                 else:
