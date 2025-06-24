@@ -1,6 +1,13 @@
 # SearXNG CLI
 
-A command-line interface for the SearXNG privacy-respecting metasearch engine. Search the web from your terminal with support for 180+ search engines.
+A command-line interface, Python library, and MCP server for the SearXNG privacy-respecting metasearch engine. Search the web from your terminal, integrate into Python projects, or connect AI assistants with support for 180+ search engines.
+
+## Features
+
+🔍 **CLI tool** - Search from your terminal using SearXNG's 180+ search engines  
+🐍 **Python library** - Programmatic search and URL content retrieval  
+🔌 **MCP server** - AI assistant integration with stdio and HTTP modes  
+📦 **Standalone binaries** - Pre-built executables for Linux, Windows, and macOS  
 
 ## Installation
 
@@ -11,7 +18,7 @@ A command-line interface for the SearXNG privacy-respecting metasearch engine. S
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/nikvdp/searxng-cli
    cd searxng-cli
    ```
 
