@@ -1,4 +1,6 @@
-# SearXNG CLI
+# SearXNG Kit
+
+**Privacy-respecting search for your terminal, code, and AI assistants**
 
 A command-line interface, Python library, and MCP server for the SearXNG privacy-respecting metasearch engine. Search the web from your terminal, integrate into Python projects, or connect AI assistants with support for 180+ search engines.
 
@@ -18,8 +20,8 @@ A command-line interface, Python library, and MCP server for the SearXNG privacy
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/nikvdp/searxng-cli
-   cd searxng-cli
+   git clone https://github.com/nikvdp/searxng-kit
+   cd searxng-kit
    ```
 
 2. **Install the package:**
@@ -209,7 +211,7 @@ pyinstaller searxng.spec
 
 ## MCP Server Integration
 
-SearXNG CLI includes a Model Context Protocol (MCP) server for AI application integration. This allows AI assistants like Claude to search the web and fetch URL content directly.
+SearXNG Kit includes a Model Context Protocol (MCP) server for AI application integration. This allows AI assistants like Claude to search the web and fetch URL content directly.
 
 ### Starting the MCP Server
 ```bash
@@ -285,7 +287,7 @@ search() {
 
 ## Python Library Usage
 
-SearXNG CLI can also be used as a Python library in your projects:
+SearXNG Kit can also be used as a Python library in your projects:
 
 ```python
 import searxng
