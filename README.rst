@@ -1,9 +1,11 @@
 .. SPDX-License-Identifier: AGPL-3.0-or-later
 
-SearXNG CLI
+SearXNG Kit
 ===========
 
-**This is a fork of SearXNG focused on providing command-line interface functionality.**
+**This is a fork of SearXNG focused on providing a complete search toolkit.**
+
+**Privacy-respecting search for your terminal, code, and AI assistants**
 
 🔍 **CLI tool** - Search from your terminal using SearXNG's 180+ search engines
 
@@ -20,8 +22,8 @@ SearXNG CLI
 .. code-block:: bash
 
    # Clone the repository
-   git clone https://github.com/nikvdp/searxng-cli
-   cd searxng-cli
+   git clone https://github.com/nikvdp/searxng-kit
+   cd searxng-kit
    
    # Install from source
    pip install .

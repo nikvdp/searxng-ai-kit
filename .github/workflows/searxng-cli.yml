@@ -1,4 +1,4 @@
-name: SearXNG CLI
+name: SearXNG Kit
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    name: Build CLI (${{ matrix.platform }}-${{ matrix.arch }})
+    name: Build Kit (${{ matrix.platform }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -21,22 +21,22 @@ jobs:
             platform: linux
             arch: x64
             binary_name: searxng-cli
-            asset_name: searxng-cli-linux-x64
+            asset_name: searxng-kit-linux-x64
           - os: windows-latest
             platform: windows
             arch: x64
             binary_name: searxng-cli.exe
-            asset_name: searxng-cli-windows-x64.exe
+            asset_name: searxng-kit-windows-x64.exe
           - os: macos-latest
             platform: macos
             arch: x64
             binary_name: searxng-cli
-            asset_name: searxng-cli-macos-x64
+            asset_name: searxng-kit-macos-x64
           - os: macos-latest-xlarge
             platform: macos
             arch: arm64
             binary_name: searxng-cli
-            asset_name: searxng-cli-macos-arm64
+            asset_name: searxng-kit-macos-arm64
 
     steps:
     - name: Checkout code
@@ -153,7 +153,7 @@ jobs:
       id: release_notes
       run: |
         cat > release_notes.md << 'EOF'
-        # SearXNG CLI Release ${{ github.ref_name }}
+        # SearXNG Kit Release ${{ github.ref_name }}
         
         A privacy-respecting command-line search tool powered by SearXNG.
         
@@ -167,37 +167,37 @@ jobs:
         ## Download
         Choose the appropriate binary for your platform:
         
-        - **Linux (x64)**: `searxng-cli-linux-x64.tar.gz`
-        - **Windows (x64)**: `searxng-cli-windows-x64.exe.zip` 
-        - **macOS (Intel)**: `searxng-cli-macos-x64.tar.gz`
-        - **macOS (Apple Silicon)**: `searxng-cli-macos-arm64.tar.gz`
+        - **Linux (x64)**: `searxng-kit-linux-x64.tar.gz`
+        - **Windows (x64)**: `searxng-kit-windows-x64.exe.zip` 
+        - **macOS (Intel)**: `searxng-kit-macos-x64.tar.gz`
+        - **macOS (Apple Silicon)**: `searxng-kit-macos-arm64.tar.gz`
         
         ## Quick Start
         ```bash
         # Extract the binary (Linux/macOS)
-        tar -xzf searxng-cli-*.tar.gz
+        tar -xzf searxng-kit-*.tar.gz
         
         # Make executable and run
-        chmod +x searxng-cli
-        ./searxng-cli search "your query here"
+        chmod +x searxng-kit
+        ./searxng-kit search "your query here"
         
         # See all options
-        ./searxng-cli --help
+        ./searxng-kit --help
         ```
         
         ## Usage Examples
         ```bash
         # Basic search
-        ./searxng-cli search "python tutorial"
+        ./searxng-kit search "python tutorial"
         
         # Search with specific engines
-        ./searxng-cli search "machine learning" --engines duckduckgo,startpage
+        ./searxng-kit search "machine learning" --engines duckduckgo,startpage
         
         # JSON output for scripting
-        ./searxng-cli search "data science" --format json
+        ./searxng-kit search "data science" --format json
         
         # List available engines
-        ./searxng-cli engines --common
+        ./searxng-kit engines --common
         ```
         
         Built with ❤️ using SearXNG, Python, and PyInstaller.
@@ -207,7 +207,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        name: SearXNG CLI ${{ github.ref_name }}
+        name: SearXNG Kit ${{ github.ref_name }}
         body_path: release_notes.md
         draft: false
         prerelease: false
@@ -216,7 +216,7 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
 
   test:
-    name: Test CLI Build
+    name: Test Kit Build
     needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
@@ -225,16 +225,16 @@ jobs:
     - name: Download Linux artifact
       uses: actions/download-artifact@v4
       with:
-        name: searxng-cli-linux-x64
+        name: searxng-kit-linux-x64
         path: test
         
-    - name: Test CLI functionality
+    - name: Test Kit functionality
       run: |
         cd test
-        tar -xzf searxng-cli-linux-x64.tar.gz
-        chmod +x searxng-cli-linux-x64
+        tar -xzf searxng-kit-linux-x64.tar.gz
+        chmod +x searxng-kit-linux-x64
         echo "Testing help command..."
-        ./searxng-cli-linux-x64 --help
+        ./searxng-kit-linux-x64 --help
         echo "Testing engines command..."
-        ./searxng-cli-linux-x64 engines --common || echo "Engines test failed but continuing"
-        echo "CLI functionality test completed"
+        ./searxng-kit-linux-x64 engines --common || echo "Engines test failed but continuing"
+        echo "Kit functionality test completed"
