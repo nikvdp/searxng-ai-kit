@@ -1,9 +1,28 @@
 [project]
 name = "searxng-cli"
 version = "0.1.0"
-description = "Command-line interface for SearXNG privacy-respecting metasearch engine"
+description = "Command-line interface and Python library for SearXNG privacy-respecting metasearch engine"
 readme = "README.rst"
 requires-python = ">=3.11"
+authors = [
+    {name = "SearXNG CLI Contributors"}
+]
+license = {text = "AGPL-3.0"}
+keywords = ["search", "privacy", "metasearch", "searxng", "cli", "library"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 dependencies = [
     "babel==2.17.0",
     "brotli==1.1.0",
@@ -42,7 +61,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["searx*"]
+include = ["searxng*"]
 
 [tool.setuptools]
 py-modules = ["searxng_cli"]
@@ -71,4 +90,7 @@ searx = [
 ]
 
 [tool.uv]
-dev-dependencies = []
+dev-dependencies = [
+    "ipykernel>=6.29.5",
+    "ipython>=9.3.0",
+]

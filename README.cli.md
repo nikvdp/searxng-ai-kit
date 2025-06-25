@@ -276,6 +276,45 @@ search() {
 }
 ```
 
+## Python Library Usage
+
+SearXNG CLI can also be used as a Python library in your projects:
+
+```python
+import searxng
+
+# Basic search
+results = searxng.search("python tutorial", max_results=10)
+print(f"Found {results['total_results']} results")
+
+# Fetch URL content
+content = searxng.fetch_url("https://example.com")
+if content["success"]:
+    print(f"Title: {content['title']}")
+
+# Parallel URL fetching
+urls = ["https://site1.com", "https://site2.com"]
+contents = searxng.fetch_urls(urls, max_concurrent=3)
+
+# Using client with defaults
+client = searxng.SearXNGClient(
+    default_engines=["duckduckgo", "startpage"],
+    default_max_results=15
+)
+results = client.search("machine learning")
+```
+
+### Library API
+
+- `searxng.search(query, **kwargs)` - Web search with customizable parameters
+- `searxng.fetch_url(url)` - Extract content from single URL  
+- `searxng.fetch_urls(urls, max_concurrent=5)` - Parallel URL content extraction
+- `searxng.get_available_engines()` - Get engine information
+- `searxng.get_categories()` - Get search categories
+- `searxng.SearXNGClient(**defaults)` - Client class with reusable settings
+
+All functions have async variants (`search_async`, `fetch_url_async`, etc.).
+
 ## License
 
 This CLI tool uses SearXNG, which is licensed under AGPL-3.0. See the main repository for full license details.
