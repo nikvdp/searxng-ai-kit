@@ -1405,7 +1405,7 @@ def multi_search_command(
 @app.command()
 def chat(
     prompt: str = typer.Argument(..., help="Chat prompt or question"),
-    model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
+    model: str = typer.Option("openai/o4-mini", "--model", "-m", help="Model to use (format: provider/model)"),
     format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
 ):
     """Chat with an LLM that has access to web search and URL fetching tools."""
@@ -1524,7 +1524,15 @@ def chat(
     async def run_chat():
         console.print(f"[dim]Using model: {model}[/dim]")
         
-        messages = [{"role": "user", "content": prompt}]
+        # Enhanced prompt to encourage parallel tool usage
+        enhanced_prompt = f"""You have access to powerful web search and URL fetching tools. When researching topics, you should:
+- Use multi_web_search to run multiple related searches in parallel for comprehensive coverage
+- Use fetch_urls to fetch content from multiple URLs simultaneously when you need detailed information
+- Be aggressive about using parallel tools to gather comprehensive data efficiently
+
+User request: {prompt}"""
+        
+        messages = [{"role": "user", "content": enhanced_prompt}]
         
         try:
             # Make initial request to the LLM
@@ -1545,7 +1553,22 @@ def chat(
                     function_name = tool_call.function.name
                     function_args = json.loads(tool_call.function.arguments)
                     
-                    console.print(f"[dim]🔍 Calling {function_name}...[/dim]")
+                    # Show detailed tool call information
+                    console.print(f"[dim]🔍 Calling {function_name}[/dim]")
+                    if function_name in ["web_search", "multi_web_search"]:
+                        if "query" in function_args:
+                            console.print(f"[dim]  → Query: \"{function_args['query']}\"[/dim]")
+                        if "queries" in function_args:
+                            console.print(f"[dim]  → Queries: {function_args['queries']}[/dim]")
+                        if "category" in function_args and function_args["category"] != "general":
+                            console.print(f"[dim]  → Category: {function_args['category']}[/dim]")
+                        if "max_results" in function_args and function_args["max_results"] != 10:
+                            console.print(f"[dim]  → Max results: {function_args['max_results']}[/dim]")
+                    elif function_name in ["fetch_url", "fetch_urls"]:
+                        if "url" in function_args:
+                            console.print(f"[dim]  → URL: {function_args['url']}[/dim]")
+                        if "urls" in function_args:
+                            console.print(f"[dim]  → URLs: {function_args['urls']}[/dim]")
                     
                     # Execute the tool using our existing handler
                     tool_result = await handle_tool_call(function_name, function_args)
