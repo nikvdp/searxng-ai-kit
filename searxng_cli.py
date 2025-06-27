@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import uuid
@@ -19,6 +20,20 @@ from rich.text import Text
 
 # Add the current directory to Python path so we can import searx
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Configure logging to suppress noisy errors from SearXNG engines
+def configure_logging():
+    """Configure logging to suppress engine errors that don't affect overall functionality."""
+    # Set SearXNG loggers to WARNING level to suppress INFO/ERROR for individual engine failures
+    logging.getLogger('searx').setLevel(logging.CRITICAL)
+    logging.getLogger('searx.engines').setLevel(logging.CRITICAL) 
+    logging.getLogger('searx.search').setLevel(logging.CRITICAL)
+    logging.getLogger('searx.network').setLevel(logging.CRITICAL)
+    logging.getLogger('httpx').setLevel(logging.CRITICAL)
+    logging.getLogger('httpcore').setLevel(logging.CRITICAL)
+    
+# Configure logging early
+configure_logging()
 
 import searx
 import searx.engines
@@ -861,6 +876,25 @@ def get_mcp_tools():
                 "required": ["urls"],
             },
         ),
+        Tool(
+            name="ask_o3",
+            description="Get expert advice and research reports from OpenAI's powerful o3 model, which is state-of-the-art for compiling comprehensive reports using web data. The o3 model has access to web search and URL fetching capabilities.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Question or research request to ask the o3 model"
+                    },
+                    "model": {
+                        "type": "string", 
+                        "description": "Model to use (default: openai/o3)",
+                        "default": "openai/o3"
+                    }
+                },
+                "required": ["prompt"],
+            },
+        ),
     ]
 
 
@@ -932,6 +966,153 @@ async def handle_tool_call(name: str, arguments: dict):
         # Multiple URLs - use parallel fetching
         result = await fetch_multiple_urls_async(urls)
         return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+    
+    elif name == "ask_o3":
+        prompt = arguments.get("prompt")
+        if not prompt:
+            return json.dumps({"error": "Prompt is required"})
+        
+        model = arguments.get("model", "openai/o3")
+        
+        # Import the required modules here to avoid circular imports
+        import litellm
+        import os
+        
+        # Check for API keys
+        api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+        }
+        
+        # Check if we have at least one API key
+        if not any(api_keys.values()):
+            return json.dumps({
+                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY"
+            })
+        
+        # Define tools for the LLM (same as in chat command)
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web using SearXNG's search engines",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"},
+                            "category": {"type": "string", "description": "Search category", "default": "general"},
+                            "max_results": {"type": "integer", "description": "Maximum results", "default": 10}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "multi_web_search",
+                    "description": "Search the web with multiple queries in parallel",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "queries": {"type": "array", "items": {"type": "string"}, "description": "Array of search queries"},
+                            "category": {"type": "string", "description": "Search category", "default": "general"},
+                            "max_results": {"type": "integer", "description": "Maximum results per query", "default": 10}
+                        },
+                        "required": ["queries"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fetch_url",
+                    "description": "Fetch and extract content from a single URL",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"url": {"type": "string", "description": "URL to fetch"}},
+                        "required": ["url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "fetch_urls",
+                    "description": "Fetch and extract content from multiple URLs in parallel",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"urls": {"type": "array", "items": {"type": "string"}, "description": "URLs to fetch"}},
+                        "required": ["urls"]
+                    }
+                }
+            }
+        ]
+        
+        try:
+            # Enhanced prompt to encourage parallel tool usage
+            enhanced_prompt = f"""You have access to powerful web search and URL fetching tools. When researching topics, you should:
+- Use multi_web_search to run multiple related searches in parallel for comprehensive coverage
+- Use fetch_urls to fetch content from multiple URLs simultaneously when you need detailed information
+- Be aggressive about using parallel tools to gather comprehensive data efficiently
+
+User request: {prompt}"""
+            
+            messages = [{"role": "user", "content": enhanced_prompt}]
+            
+            # Make initial request to the LLM
+            response = litellm.completion(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+            
+            # Handle tool calls iteratively
+            while response.choices[0].message.tool_calls:
+                # Add the assistant's message with tool calls
+                messages.append(response.choices[0].message.model_dump())
+                
+                # Execute each tool call
+                for tool_call in response.choices[0].message.tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    # Execute the tool using our existing handler (recursive call)
+                    tool_result = await handle_tool_call(function_name, function_args)
+                    
+                    # Add tool result to messages
+                    messages.append({
+                        "role": "tool",
+                        "content": tool_result,
+                        "tool_call_id": tool_call.id
+                    })
+                
+                # Get next response from LLM
+                response = litellm.completion(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto"
+                )
+            
+            # Return the final response
+            final_response = response.choices[0].message.content
+            return json.dumps({
+                "success": True,
+                "model": model,
+                "prompt": prompt,
+                "response": final_response
+            }, indent=2, ensure_ascii=False)
+            
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Error calling {model}: {str(e)}",
+                "prompt": prompt
+            })
     
     else:
         return json.dumps({"error": f"Unknown tool: {name}"})
