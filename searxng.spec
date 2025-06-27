@@ -71,6 +71,22 @@ hiddenimports = [
     'mcp.server.stdio',
     'mcp.types',
     'asyncio',
+    'litellm',
+    'litellm.completion',
+    'litellm.router',
+    'litellm.proxy',
+    'litellm.exceptions',
+    'litellm.utils',
+    'openai',
+    'anthropic',
+    'google',
+    'google.generativeai',
+    'tokenizers',
+    'tiktoken',
+    'requests',
+    'aiohttp',
+    'pydantic',
+    'pydantic_core',
 ]
 
 # Add all engine modules
