@@ -611,6 +611,75 @@ async def perform_search_async(
         }
 
 
+async def perform_multi_search_async(
+    queries: List[str],
+    category: str = "general",
+    engines: Optional[List[str]] = None,
+    language: str = "all",
+    safe_search: int = 0,
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """Perform multiple search queries in parallel."""
+    if not queries:
+        return {"error": "No queries provided"}
+    
+    # Create tasks for parallel execution
+    tasks = []
+    for query in queries:
+        task = perform_search_async(
+            query=query,
+            category=category,
+            engines=engines,
+            language=language,
+            safe_search=safe_search,
+            max_results=max_results,
+        )
+        tasks.append(task)
+    
+    try:
+        # Execute all searches in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results and handle exceptions
+        search_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                search_results.append({
+                    "success": False,
+                    "query": queries[i],
+                    "error": f"Search failed: {str(result)}",
+                })
+            else:
+                search_results.append(result)
+        
+        # Create a more structured response that clearly maps queries to results
+        structured_results = []
+        for i, (query, result) in enumerate(zip(queries, search_results)):
+            structured_result = {
+                "query_index": i + 1,
+                "query": query,
+                "search_result": result
+            }
+            structured_results.append(structured_result)
+        
+        return {
+            "success": True,
+            "summary": {
+                "total_queries": len(queries),
+                "successful_queries": sum(1 for r in search_results if r.get("success", False)),
+                "queries_executed": queries
+            },
+            "results": structured_results,
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Multi-search error: {str(e)}",
+            "queries": queries,
+        }
+
+
 @app.command("fetch-urls")
 def fetch_urls_command(
     urls: List[str] = typer.Argument(..., help="URLs to fetch content from"),
@@ -729,6 +798,41 @@ def get_mcp_tools():
             },
         ),
         Tool(
+            name="multi_web_search",
+            description="Search the web with multiple queries in parallel using SearXNG",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of search queries to execute in parallel",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Search category (general, images, videos, news, science, it)",
+                        "default": "general",
+                    },
+                    "engines": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of search engines to use",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return per query",
+                        "default": 10,
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Search language",
+                        "default": "all",
+                    },
+                },
+                "required": ["queries"],
+            },
+        ),
+        Tool(
             name="fetch_url",
             description="Fetch and extract content from a single URL using Jina.ai's reader service.",
             inputSchema={
@@ -771,6 +875,32 @@ async def handle_tool_call(name: str, arguments: dict):
         
         result = await perform_search_async(
             query=query,
+            category=category,
+            engines=engines,
+            language=language,
+            max_results=max_results,
+        )
+        
+        return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+    
+    elif name == "multi_web_search":
+        queries = arguments.get("queries")
+        if not queries:
+            return json.dumps({"error": "Queries array is required"})
+        
+        if not isinstance(queries, list):
+            return json.dumps({"error": "Queries must be an array"})
+        
+        if not queries:
+            return json.dumps({"error": "Queries array cannot be empty"})
+        
+        category = arguments.get("category", "general")
+        engines = arguments.get("engines")
+        max_results = arguments.get("max_results", 10)
+        language = arguments.get("language", "all")
+        
+        result = await perform_multi_search_async(
+            queries=queries,
             category=category,
             engines=engines,
             language=language,
@@ -1199,6 +1329,269 @@ async def run_http_server(mcp_server, host: str, port: int):
     except Exception as e:
         print(f"Error running MCP HTTP server: {e}", file=sys.stderr)
         raise typer.Exit(1)
+
+
+@app.command("multi-search")
+def multi_search_command(
+    queries: List[str] = typer.Argument(..., help="Search queries to execute in parallel"),
+    output_format: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
+    category: str = typer.Option("general", "--category", "-c", help="Search category"),
+    engines: Optional[List[str]] = typer.Option(None, "--engines", "-e", help="Search engines to use"),
+    max_results: int = typer.Option(10, "--max-results", "-n", help="Maximum results per query"),
+    language: str = typer.Option("all", "--language", "-l", help="Search language"),
+):
+    """Execute multiple search queries in parallel."""
+    if not queries:
+        console.print("[red]Error: At least one query is required[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        import asyncio
+        result = asyncio.run(perform_multi_search_async(
+            queries=queries,
+            category=category,
+            engines=engines,
+            language=language,
+            max_results=max_results,
+        ))
+        
+        if output_format.lower() == "json":
+            # JSON output
+            output = json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+            console.print(output)
+        else:
+            # Human-readable output
+            if result.get("success"):
+                summary = result.get("summary", {})
+                console.print(f"[bold green]✓ Multi-Search Results[/bold green]")
+                console.print(f"Executed {summary.get('total_queries', 0)} queries, {summary.get('successful_queries', 0)} successful")
+                console.print()
+                
+                for i, query_result in enumerate(result.get("results", [])):
+                    query_info = query_result.get("search_result", {})
+                    query_text = query_result.get("query", "")
+                    query_index = query_result.get("query_index", i + 1)
+                    
+                    if query_info.get("success"):
+                        console.print(f"[bold blue]Query {query_index}:[/bold blue] {query_text}")
+                        console.print(f"[dim]Found {len(query_info.get('results', []))} results[/dim]")
+                        
+                        for j, search_result in enumerate(query_info.get("results", [])[:3]):  # Show top 3
+                            console.print(f"  {j+1}. [bold]{search_result.get('title', 'No title')}[/bold]")
+                            console.print(f"     [link]{search_result.get('url', '')}[/link]")
+                            if search_result.get("content"):
+                                content = search_result["content"][:100] + "..." if len(search_result["content"]) > 100 else search_result["content"]
+                                console.print(f"     {content}")
+                        
+                        if len(query_info.get("results", [])) > 3:
+                            console.print(f"     [dim]... and {len(query_info.get('results', [])) - 3} more results[/dim]")
+                    else:
+                        console.print(f"[bold red]Query {query_index} (FAILED):[/bold red] {query_text}")
+                        console.print(f"[red]  Error: {query_info.get('error', 'Unknown error')}[/red]")
+                    
+                    if i < len(result.get("results", [])) - 1:  # Add separator between queries
+                        console.print("[dim]" + "─" * 60 + "[/dim]")
+            else:
+                console.print(f"[red]Multi-search failed: {result.get('error', 'Unknown error')}[/red]")
+                
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error executing multi-search: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def chat(
+    prompt: str = typer.Argument(..., help="Chat prompt or question"),
+    model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
+    format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
+):
+    """Chat with an LLM that has access to web search and URL fetching tools."""
+    import litellm
+    import os
+    
+    # Check for API keys
+    api_keys = {
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+    }
+    
+    # Check if we have at least one API key
+    if not any(api_keys.values()):
+        console.print("[red]Error: No API keys found. Please set one of:[/red]")
+        console.print("  - OPENAI_API_KEY")
+        console.print("  - ANTHROPIC_API_KEY") 
+        console.print("  - GOOGLE_API_KEY")
+        raise typer.Exit(1)
+    
+    # Define tools for the LLM
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web using SearXNG's search engines",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Search category (general, images, videos, news, science, it)",
+                            "default": "general"
+                        },
+                        "max_results": {
+                            "type": "integer", 
+                            "description": "Maximum number of results to return",
+                            "default": 10
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "multi_web_search",
+                "description": "Search the web with multiple queries in parallel",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "queries": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Array of search queries to execute in parallel"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Search category (general, images, videos, news, science, it)",
+                            "default": "general"
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return per query", 
+                            "default": 10
+                        }
+                    },
+                    "required": ["queries"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_url",
+                "description": "Fetch and extract content from a single URL",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "URL to fetch content from"
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        },
+        {
+            "type": "function", 
+            "function": {
+                "name": "fetch_urls",
+                "description": "Fetch and extract content from multiple URLs in parallel",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "urls": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Array of URLs to fetch content from in parallel"
+                        }
+                    },
+                    "required": ["urls"]
+                }
+            }
+        }
+    ]
+    
+    async def run_chat():
+        console.print(f"[dim]Using model: {model}[/dim]")
+        
+        messages = [{"role": "user", "content": prompt}]
+        
+        try:
+            # Make initial request to the LLM
+            response = litellm.completion(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+            
+            # Handle tool calls
+            while response.choices[0].message.tool_calls:
+                # Add the assistant's message with tool calls
+                messages.append(response.choices[0].message.model_dump())
+                
+                # Execute each tool call
+                for tool_call in response.choices[0].message.tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    console.print(f"[dim]🔍 Calling {function_name}...[/dim]")
+                    
+                    # Execute the tool using our existing handler
+                    tool_result = await handle_tool_call(function_name, function_args)
+                    
+                    # Add tool result to messages
+                    messages.append({
+                        "role": "tool",
+                        "content": tool_result,
+                        "tool_call_id": tool_call.id
+                    })
+                
+                # Get next response from LLM
+                response = litellm.completion(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto"
+                )
+            
+            # Output final response
+            final_response = response.choices[0].message.content
+            
+            if format_output.lower() == "json":
+                output = {
+                    "model": model,
+                    "response": final_response,
+                    "tool_calls_made": len([msg for msg in messages if msg.get("role") == "tool"])
+                }
+                console.print(json.dumps(output, indent=2, ensure_ascii=False))
+            else:
+                console.print(f"\n[bold green]Response:[/bold green]\n{final_response}")
+                
+        except Exception as e:
+            if "Invalid model" in str(e) or "not supported" in str(e):
+                console.print(f"[red]Error: Model '{model}' is not supported or invalid[/red]")
+                console.print("[yellow]Try models like:[/yellow]")
+                console.print("  - openai/gpt-4o")
+                console.print("  - openai/o1-preview")
+                console.print("  - anthropic/claude-3-5-sonnet-20241022")
+                console.print("  - google/gemini-pro")
+            else:
+                console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+    
+    # Run the async chat function
+    asyncio.run(run_chat())
 
 
 def main():

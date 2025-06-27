@@ -35,6 +35,7 @@ dependencies = [
     "httpx[http2]==0.28.1",
     "isodate==0.7.2",
     "jinja2==3.1.6",
+    "litellm>=1.0.0",
     "lxml==5.4.0",
     "markdown-it-py==3.0.0",
     "mcp>=1.0.0",

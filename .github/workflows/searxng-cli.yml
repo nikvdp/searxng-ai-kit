@@ -20,22 +20,22 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             arch: x64
-            binary_name: searxng-cli
+            binary_name: searxng
             asset_name: searxng-kit-linux-x64
           - os: windows-latest
             platform: windows
             arch: x64
-            binary_name: searxng-cli.exe
+            binary_name: searxng.exe
             asset_name: searxng-kit-windows-x64.exe
           - os: macos-latest
             platform: macos
             arch: x64
-            binary_name: searxng-cli
+            binary_name: searxng
             asset_name: searxng-kit-macos-x64
           - os: macos-latest-xlarge
             platform: macos
             arch: arm64
-            binary_name: searxng-cli
+            binary_name: searxng
             asset_name: searxng-kit-macos-arm64
 
     steps:
@@ -92,16 +92,16 @@ jobs:
 
     - name: Build with PyInstaller
       run: |
-        uv run pyinstaller searxng_cli_universal.spec
+        uv run pyinstaller searxng.spec
       env:
         PYTHONPATH: .
 
     - name: Verify build
       run: |
         if [ "$RUNNER_OS" == "Windows" ]; then
-          ./dist/searxng-cli.exe --help || echo "Build verification failed but continuing..."
+          ./dist/searxng.exe --help || echo "Build verification failed but continuing..."
         else
-          ./dist/searxng-cli --help || echo "Build verification failed but continuing..."
+          ./dist/searxng --help || echo "Build verification failed but continuing..."
         fi
       shell: bash
 
@@ -109,11 +109,11 @@ jobs:
       run: |
         mkdir -p release
         if [ "$RUNNER_OS" == "Windows" ]; then
-          cp dist/searxng-cli.exe release/${{ matrix.asset_name }}
+          cp dist/searxng.exe release/${{ matrix.asset_name }}
           # Create zip for Windows
           cd release && zip ${{ matrix.asset_name }}.zip ${{ matrix.asset_name }}
         else
-          cp dist/searxng-cli release/${{ matrix.asset_name }}
+          cp dist/searxng release/${{ matrix.asset_name }}
           chmod +x release/${{ matrix.asset_name }}
           # Create tar.gz for Unix systems
           cd release && tar -czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
