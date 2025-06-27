@@ -902,6 +902,162 @@ def get_mcp_tools():
     ]
 
 
+async def ask_ai_async(
+    prompt: str,
+    model: str = "openai/o3",
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Core async function for asking AI with web search tools.
+    This is used by both the CLI command and the library interface.
+    """
+    import litellm
+    import os
+    
+    # Check for API keys
+    api_keys = {
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+    }
+    
+    # Check if we have at least one API key
+    if not any(api_keys.values()):
+        return {
+            "success": False,
+            "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+            "prompt": prompt,
+            "model": model
+        }
+    
+    # Define tools for the LLM
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web using SearXNG's search engines",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "category": {"type": "string", "description": "Search category", "default": "general"},
+                        "max_results": {"type": "integer", "description": "Maximum results", "default": 10}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "multi_web_search",
+                "description": "Search the web with multiple queries in parallel",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "queries": {"type": "array", "items": {"type": "string"}, "description": "Array of search queries"},
+                        "category": {"type": "string", "description": "Search category", "default": "general"},
+                        "max_results": {"type": "integer", "description": "Maximum results per query", "default": 10}
+                    },
+                    "required": ["queries"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_url",
+                "description": "Fetch and extract content from a single URL",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"url": {"type": "string", "description": "URL to fetch"}},
+                    "required": ["url"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_urls",
+                "description": "Fetch and extract content from multiple URLs in parallel",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"urls": {"type": "array", "items": {"type": "string"}, "description": "URLs to fetch"}},
+                    "required": ["urls"]
+                }
+            }
+        }
+    ]
+    
+    try:
+        # Enhanced prompt to encourage parallel tool usage
+        enhanced_prompt = f"""You have access to powerful web search and URL fetching tools. When researching topics, you should:
+- Use multi_web_search to run multiple related searches in parallel for comprehensive coverage
+- Use fetch_urls to fetch content from multiple URLs simultaneously when you need detailed information
+- Be aggressive about using parallel tools to gather comprehensive data efficiently
+
+User request: {prompt}"""
+        
+        messages = [{"role": "user", "content": enhanced_prompt}]
+        
+        # Prepare completion arguments
+        completion_args = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto"
+        }
+        
+        # Add base_url if provided (overrides environment variable)
+        if base_url:
+            completion_args["base_url"] = base_url
+        
+        # Make initial request to the LLM
+        response = litellm.completion(**completion_args)
+        
+        # Handle tool calls iteratively
+        while response.choices[0].message.tool_calls:
+            # Add the assistant's message with tool calls
+            messages.append(response.choices[0].message.model_dump())
+            
+            # Execute each tool call
+            for tool_call in response.choices[0].message.tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                # Execute the tool using our existing handler
+                tool_result = await handle_tool_call(function_name, function_args)
+                
+                # Add tool result to messages
+                messages.append({
+                    "role": "tool",
+                    "content": tool_result,
+                    "tool_call_id": tool_call.id
+                })
+            
+            # Get next response from LLM
+            response = litellm.completion(**completion_args)
+        
+        # Return the final response
+        final_response = response.choices[0].message.content
+        return {
+            "success": True,
+            "model": model,
+            "prompt": prompt,
+            "response": final_response
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error calling {model}: {str(e)}",
+            "prompt": prompt,
+            "model": model
+        }
+
+
 async def handle_tool_call(name: str, arguments: dict):
     """Shared tool call handler for both stdio and HTTP versions."""
     if name == "web_search":
@@ -1619,193 +1775,20 @@ def ask(
         console.print("  - OPENROUTER_API_KEY")
         raise typer.Exit(1)
     
-    # Define tools for the LLM
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Search the web using SearXNG's search engines",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query"
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "Search category (general, images, videos, news, science, it)",
-                            "default": "general"
-                        },
-                        "max_results": {
-                            "type": "integer", 
-                            "description": "Maximum number of results to return",
-                            "default": 10
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "multi_web_search",
-                "description": "Search the web with multiple queries in parallel",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "queries": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Array of search queries to execute in parallel"
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "Search category (general, images, videos, news, science, it)",
-                            "default": "general"
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return per query", 
-                            "default": 10
-                        }
-                    },
-                    "required": ["queries"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "fetch_url",
-                "description": "Fetch and extract content from a single URL",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "URL to fetch content from"
-                        }
-                    },
-                    "required": ["url"]
-                }
-            }
-        },
-        {
-            "type": "function", 
-            "function": {
-                "name": "fetch_urls",
-                "description": "Fetch and extract content from multiple URLs in parallel",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "urls": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Array of URLs to fetch content from in parallel"
-                        }
-                    },
-                    "required": ["urls"]
-                }
-            }
-        }
-    ]
-    
     async def run_chat():
         console.print(f"[dim]Using model: {model}[/dim]")
         
-        # Enhanced prompt to encourage parallel tool usage
-        enhanced_prompt = f"""You have access to powerful web search and URL fetching tools. When researching topics, you should:
-- Use multi_web_search to run multiple related searches in parallel for comprehensive coverage
-- Use fetch_urls to fetch content from multiple URLs simultaneously when you need detailed information
-- Be aggressive about using parallel tools to gather comprehensive data efficiently
-
-User request: {prompt}"""
+        # Use the shared ask function
+        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
         
-        messages = [{"role": "user", "content": enhanced_prompt}]
-        
-        try:
-            # Prepare completion arguments
-            completion_args = {
-                "model": model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto"
-            }
-            
-            # Add base_url if provided (overrides environment variable)
-            if base_url:
-                completion_args["base_url"] = base_url
-            
-            # Make initial request to the LLM
-            response = litellm.completion(**completion_args)
-            
-            # Handle tool calls
-            while response.choices[0].message.tool_calls:
-                # Add the assistant's message with tool calls
-                messages.append(response.choices[0].message.model_dump())
-                
-                # Execute each tool call
-                for tool_call in response.choices[0].message.tool_calls:
-                    function_name = tool_call.function.name
-                    function_args = json.loads(tool_call.function.arguments)
-                    
-                    # Show detailed tool call information
-                    console.print(f"[dim]🔍 Calling {function_name}[/dim]")
-                    if function_name in ["web_search", "multi_web_search"]:
-                        if "query" in function_args:
-                            console.print(f"[dim]  → Query: \"{function_args['query']}\"[/dim]")
-                        if "queries" in function_args:
-                            console.print(f"[dim]  → Queries: {function_args['queries']}[/dim]")
-                        if "category" in function_args and function_args["category"] != "general":
-                            console.print(f"[dim]  → Category: {function_args['category']}[/dim]")
-                        if "max_results" in function_args and function_args["max_results"] != 10:
-                            console.print(f"[dim]  → Max results: {function_args['max_results']}[/dim]")
-                    elif function_name in ["fetch_url", "fetch_urls"]:
-                        if "url" in function_args:
-                            console.print(f"[dim]  → URL: {function_args['url']}[/dim]")
-                        if "urls" in function_args:
-                            console.print(f"[dim]  → URLs: {function_args['urls']}[/dim]")
-                    
-                    # Execute the tool using our existing handler
-                    tool_result = await handle_tool_call(function_name, function_args)
-                    
-                    # Add tool result to messages
-                    messages.append({
-                        "role": "tool",
-                        "content": tool_result,
-                        "tool_call_id": tool_call.id
-                    })
-                
-                # Get next response from LLM
-                response = litellm.completion(**completion_args)
-            
-            # Output final response
-            final_response = response.choices[0].message.content
-            
-            if format_output.lower() == "json":
-                output = {
-                    "model": model,
-                    "response": final_response,
-                    "tool_calls_made": len([msg for msg in messages if msg.get("role") == "tool"])
-                }
-                console.print(json.dumps(output, indent=2, ensure_ascii=False))
+        if format_output.lower() == "json":
+            console.print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            if result["success"]:
+                console.print(f"\n[bold green]Response:[/bold green]\n{result['response']}")
             else:
-                console.print(f"\n[bold green]Response:[/bold green]\n{final_response}")
-                
-        except Exception as e:
-            if "Invalid model" in str(e) or "not supported" in str(e):
-                console.print(f"[red]Error: Model '{model}' is not supported or invalid[/red]")
-                console.print("[yellow]Try models like:[/yellow]")
-                console.print("  - openai/gpt-4o")
-                console.print("  - openai/o1-preview")
-                console.print("  - anthropic/claude-3-5-sonnet-20241022")
-                console.print("  - google/gemini-pro")
-            else:
-                console.print(f"[red]Error: {e}[/red]")
-            raise typer.Exit(1)
+                console.print(f"[red]Error: {result['error']}[/red]")
+                raise typer.Exit(1)
     
     # Run the async chat function
     asyncio.run(run_chat())

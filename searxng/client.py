@@ -26,6 +26,7 @@ from searxng_cli import (
     fetch_multiple_urls_async,
     get_available_engines as _get_engines_data,
     categories as _get_categories_data,
+    ask_ai_async,
 )
 
 
@@ -185,6 +186,64 @@ def get_categories() -> Dict[str, List[str]]:
     return _get_categories_data()
 
 
+def ask(
+    prompt: str,
+    *,
+    model: str = "openai/o3",
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Ask an AI assistant with access to web search and URL fetching tools.
+    
+    This function provides access to AI models that can use web search and URL 
+    fetching capabilities to provide comprehensive answers to questions.
+    
+    Args:
+        prompt: Question or research request
+        model: Model to use in format "provider/model" (default: "openai/o3")
+        base_url: Custom API base URL (overrides OPENAI_BASE_URL env var)
+    
+    Returns:
+        Dictionary containing the AI response:
+        {
+            "success": bool,
+            "model": str,
+            "prompt": str,
+            "response": str,
+            "error": str (only if success=False)
+        }
+    
+    Environment Variables:
+        One of these API keys is required:
+        - OPENAI_API_KEY: For OpenAI models
+        - ANTHROPIC_API_KEY: For Anthropic models  
+        - GOOGLE_API_KEY: For Google models
+        - OPENROUTER_API_KEY: For OpenRouter models
+        
+        Optional:
+        - OPENAI_BASE_URL: Custom base URL (can be overridden by base_url parameter)
+    
+    Examples:
+        >>> # Basic usage
+        >>> response = searxng.ask("What are the latest developments in quantum computing?")
+        >>> if response["success"]:
+        ...     print(response["response"])
+        
+        >>> # Using OpenRouter
+        >>> response = searxng.ask(
+        ...     "Research renewable energy trends",
+        ...     model="openrouter/openai/gpt-4o-mini"
+        ... )
+        
+        >>> # Custom endpoint
+        >>> response = searxng.ask(
+        ...     "Analyze market data",
+        ...     base_url="https://custom-endpoint.com/v1"
+        ... )
+    """
+    return asyncio.run(ask_async(prompt=prompt, model=model, base_url=base_url))
+
+
 # Async API (direct access to underlying functions)
 async def search_async(
     query: str,
@@ -276,6 +335,26 @@ async def fetch_urls_async(
     # For now, we'll use the existing implementation which uses
     # searx.network.multi_requests() with its own concurrency handling.
     return await fetch_multiple_urls_async(urls)
+
+
+async def ask_async(
+    prompt: str,
+    *,
+    model: str = "openai/o3",
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Async version of ask(). See ask() for documentation.
+    
+    Example:
+        >>> import asyncio
+        >>> async def main():
+        ...     response = await searxng.ask_async("What are the latest AI developments?")
+        ...     if response["success"]:
+        ...         print(response["response"])
+        >>> asyncio.run(main())
+    """
+    return await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
 
 
 # Convenience classes for more structured usage
@@ -376,3 +455,23 @@ class SearXNGClient:
     async def fetch_urls_async(self, urls: List[str]) -> List[Dict[str, Any]]:
         """Async fetch multiple URLs using client concurrency settings."""
         return await fetch_urls_async(urls, max_concurrent=self.max_concurrent_urls)
+    
+    def ask(
+        self,
+        prompt: str,
+        *,
+        model: str = "openai/o3",
+        base_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Ask an AI assistant using client settings."""
+        return ask(prompt=prompt, model=model, base_url=base_url)
+    
+    async def ask_async(
+        self,
+        prompt: str,
+        *,
+        model: str = "openai/o3", 
+        base_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Async ask an AI assistant using client settings."""
+        return await ask_async(prompt=prompt, model=model, base_url=base_url)

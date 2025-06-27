@@ -383,6 +383,17 @@ content = searxng.fetch_url("https://example.com")
 if content["success"]:
     print(f"Title: {content['title']}")
 
+# Ask AI assistant with web search access
+response = searxng.ask("What are the latest developments in quantum computing?")
+if response["success"]:
+    print(response["response"])
+
+# Ask with custom model
+response = searxng.ask(
+    "Research renewable energy trends",
+    model="openrouter/openai/gpt-4o-mini"
+)
+
 # Parallel URL fetching
 urls = ["https://site1.com", "https://site2.com"]
 contents = searxng.fetch_urls(urls, max_concurrent=3)
@@ -393,6 +404,7 @@ client = searxng.SearXNGClient(
     default_max_results=15
 )
 results = client.search("machine learning")
+ai_response = client.ask("Explain machine learning basics")
 ```
 
 ### Library API
@@ -400,11 +412,12 @@ results = client.search("machine learning")
 - `searxng.search(query, **kwargs)` - Web search with customizable parameters
 - `searxng.fetch_url(url)` - Extract content from single URL  
 - `searxng.fetch_urls(urls, max_concurrent=5)` - Parallel URL content extraction
+- `searxng.ask(prompt, model="openai/o3", base_url=None)` - AI assistant with web search tools
 - `searxng.get_available_engines()` - Get engine information
 - `searxng.get_categories()` - Get search categories
 - `searxng.SearXNGClient(**defaults)` - Client class with reusable settings
 
-All functions have async variants (`search_async`, `fetch_url_async`, etc.).
+All functions have async variants (`search_async`, `fetch_url_async`, `ask_async`, etc.).
 
 ## License
 
