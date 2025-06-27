@@ -4,6 +4,7 @@ import os
 import sys
 import glob
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 # Add the current directory to Python path
 sys.path.insert(0, os.getcwd())
@@ -31,6 +32,15 @@ datas = [
     ('searx/plugins', 'searx/plugins'),
     ('searx/engines', 'searx/engines'),
 ]
+
+# Add tiktoken data files for LiteLLM support
+datas.extend(collect_data_files("tiktoken"))
+
+# Add LiteLLM data files
+try:
+    datas.extend(collect_data_files("litellm"))
+except Exception:
+    pass
 
 # Hidden imports that PyInstaller might miss
 hiddenimports = [
@@ -83,6 +93,8 @@ hiddenimports = [
     'google.generativeai',
     'tokenizers',
     'tiktoken',
+    'tiktoken_ext',
+    'tiktoken_ext.openai_public',
     'requests',
     'aiohttp',
     'pydantic',
