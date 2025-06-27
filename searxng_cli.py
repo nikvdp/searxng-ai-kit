@@ -877,19 +877,23 @@ def get_mcp_tools():
             },
         ),
         Tool(
-            name="ask_o3",
-            description="Get expert advice and research reports from OpenAI's powerful o3 model, which is state-of-the-art for compiling comprehensive reports using web data. The o3 model has access to web search and URL fetching capabilities.",
+            name="ask",
+            description="Ask an AI assistant with access to web search and URL fetching tools. The assistant can run parallel searches and fetch content from multiple URLs to provide comprehensive research and answers.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "prompt": {
                         "type": "string",
-                        "description": "Question or research request to ask the o3 model"
+                        "description": "Question or research request to ask the AI assistant"
                     },
                     "model": {
                         "type": "string", 
                         "description": "Model to use (default: openai/o3)",
                         "default": "openai/o3"
+                    },
+                    "base_url": {
+                        "type": "string",
+                        "description": "Custom API base URL (optional, overrides OPENAI_BASE_URL env var)"
                     }
                 },
                 "required": ["prompt"],
@@ -967,12 +971,13 @@ async def handle_tool_call(name: str, arguments: dict):
         result = await fetch_multiple_urls_async(urls)
         return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
     
-    elif name == "ask_o3":
+    elif name == "ask":
         prompt = arguments.get("prompt")
         if not prompt:
             return json.dumps({"error": "Prompt is required"})
         
         model = arguments.get("model", "openai/o3")
+        base_url = arguments.get("base_url")  # Optional custom base URL
         
         # Import the required modules here to avoid circular imports
         import litellm
@@ -983,12 +988,13 @@ async def handle_tool_call(name: str, arguments: dict):
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
             "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+            "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
         }
         
         # Check if we have at least one API key
         if not any(api_keys.values()):
             return json.dumps({
-                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY"
+                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY"
             })
         
         # Define tools for the LLM (same as in chat command)
@@ -1062,13 +1068,20 @@ User request: {prompt}"""
             
             messages = [{"role": "user", "content": enhanced_prompt}]
             
+            # Prepare completion arguments
+            completion_args = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto"
+            }
+            
+            # Add base_url if provided (overrides environment variable)
+            if base_url:
+                completion_args["base_url"] = base_url
+            
             # Make initial request to the LLM
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-            )
+            response = litellm.completion(**completion_args)
             
             # Handle tool calls iteratively
             while response.choices[0].message.tool_calls:
@@ -1091,12 +1104,7 @@ User request: {prompt}"""
                     })
                 
                 # Get next response from LLM
-                response = litellm.completion(
-                    model=model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto"
-                )
+                response = litellm.completion(**completion_args)
             
             # Return the final response
             final_response = response.choices[0].message.content
@@ -1584,12 +1592,13 @@ def multi_search_command(
 
 
 @app.command()
-def chat(
-    prompt: str = typer.Argument(..., help="Chat prompt or question"),
-    model: str = typer.Option("openai/o4-mini", "--model", "-m", help="Model to use (format: provider/model)"),
+def ask(
+    prompt: str = typer.Argument(..., help="Question or research request"),
+    model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
     format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
+    base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
 ):
-    """Chat with an LLM that has access to web search and URL fetching tools."""
+    """Ask an AI assistant with access to web search and URL fetching tools."""
     import litellm
     import os
     
@@ -1598,6 +1607,7 @@ def chat(
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
         "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
     }
     
     # Check if we have at least one API key
@@ -1606,6 +1616,7 @@ def chat(
         console.print("  - OPENAI_API_KEY")
         console.print("  - ANTHROPIC_API_KEY") 
         console.print("  - GOOGLE_API_KEY")
+        console.print("  - OPENROUTER_API_KEY")
         raise typer.Exit(1)
     
     # Define tools for the LLM
@@ -1716,13 +1727,20 @@ User request: {prompt}"""
         messages = [{"role": "user", "content": enhanced_prompt}]
         
         try:
+            # Prepare completion arguments
+            completion_args = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto"
+            }
+            
+            # Add base_url if provided (overrides environment variable)
+            if base_url:
+                completion_args["base_url"] = base_url
+            
             # Make initial request to the LLM
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-            )
+            response = litellm.completion(**completion_args)
             
             # Handle tool calls
             while response.choices[0].message.tool_calls:
@@ -1762,12 +1780,7 @@ User request: {prompt}"""
                     })
                 
                 # Get next response from LLM
-                response = litellm.completion(
-                    model=model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto"
-                )
+                response = litellm.completion(**completion_args)
             
             # Output final response
             final_response = response.choices[0].message.content

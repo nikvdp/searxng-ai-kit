@@ -209,6 +209,78 @@ pyinstaller searxng.spec
 
 **Note:** The executable may have some engine loading issues. The Python version is recommended for full functionality.
 
+## AI Assistant Integration
+
+SearXNG Kit includes an AI assistant feature that combines web search capabilities with powerful language models. The assistant can perform parallel searches and fetch content from multiple URLs to provide comprehensive research and answers.
+
+### Ask Command
+
+```bash
+# Ask a question using the default o3 model
+searxng ask "What are the latest developments in quantum computing?"
+
+# Use a specific model
+searxng ask "Research renewable energy trends" --model "openai/gpt-4o-mini"
+
+# Get JSON output for programmatic use
+searxng ask "Compare Python vs JavaScript" --format json
+```
+
+### API Key Configuration
+
+Set one of these environment variables:
+
+```bash
+# OpenAI (recommended)
+export OPENAI_API_KEY="your-openai-key"
+
+# OpenRouter (access to many models)
+export OPENROUTER_API_KEY="your-openrouter-key"
+
+# Anthropic
+export ANTHROPIC_API_KEY="your-anthropic-key"
+
+# Google
+export GOOGLE_API_KEY="your-google-key"
+```
+
+### OpenRouter Integration
+
+OpenRouter provides access to many AI models through a single API. SearXNG Kit has native OpenRouter support:
+
+```bash
+# Set OpenRouter API key
+export OPENROUTER_API_KEY="your-openrouter-key"
+
+# Use OpenRouter models with native prefix
+searxng ask "Analyze market trends" --model "openrouter/openai/gpt-4o-mini"
+searxng ask "Technical research" --model "openrouter/anthropic/claude-3.5-sonnet"
+
+# Use custom base URL (alternative method)
+searxng ask "Question" --base-url "https://openrouter.ai/api/v1" --model "openai/gpt-4o-mini"
+```
+
+### Custom API Endpoints
+
+Use custom OpenAI-compatible endpoints:
+
+```bash
+# Via environment variable
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+searxng ask "Question"
+
+# Via command line flag (overrides environment)
+searxng ask "Question" --base-url "https://custom-endpoint.com/v1"
+```
+
+### Available AI Tools
+
+The assistant has access to these tools for research:
+- **web_search**: Search using SearXNG's 180+ engines  
+- **multi_web_search**: Run multiple searches in parallel
+- **fetch_url**: Extract content from a single URL
+- **fetch_urls**: Fetch content from multiple URLs simultaneously
+
 ## MCP Server Integration
 
 SearXNG Kit includes a Model Context Protocol (MCP) server for AI application integration. This allows AI assistants like Claude to search the web and fetch URL content directly.
@@ -225,11 +297,21 @@ searxng mcp-server
    - Supports all search parameters (query, category, engines, language, etc.)
    - Returns structured JSON results
 
-2. **fetch_url**: Retrieve and extract content from URL(s) using Jina.ai
-   - **Single URL**: `{"url": "https://example.com"}`
-   - **Multiple URLs (parallel)**: `{"url": ["https://site1.com", "https://site2.com"]}`
+2. **multi_web_search**: Run multiple search queries in parallel
+   - Execute multiple searches simultaneously for comprehensive coverage
+   - Faster than sequential searches for research tasks
+
+3. **fetch_url**: Retrieve and extract content from a single URL using Jina.ai
+   - Clean text extraction and content processing
+
+4. **fetch_urls**: Retrieve and extract content from multiple URLs in parallel
    - Maintains order of results when using arrays
    - Handles errors gracefully while preserving partial results
+
+5. **ask**: Ask an AI assistant with access to all the above tools
+   - Uses OpenAI o3 model by default
+   - Can recursively use search and URL fetching tools
+   - Supports custom models and base URLs via parameters
 
 ### Claude Desktop Configuration
 Add this to your `claude_desktop_config.json`:
