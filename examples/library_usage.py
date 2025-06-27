@@ -94,6 +94,24 @@ def parallel_url_fetching_example():
     print()
 
 
+def ai_assistant_example():
+    """AI assistant usage example."""
+    print("=== AI Assistant Example ===")
+    
+    # Basic AI assistant usage
+    response = searxng.ask("What are the key features of Python 3.12?")
+    
+    if response["success"]:
+        print("✓ AI assistant responded successfully")
+        print(f"Model used: {response['model']}")
+        print(f"Response preview: {response['response'][:200]}...")
+    else:
+        print("✗ AI assistant failed")
+        print(f"Error: {response['error']}")
+        print("Note: This requires an API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)")
+    print()
+
+
 def client_class_example():
     """SearXNGClient class usage example."""
     print("=== Client Class Example ===")
@@ -118,6 +136,13 @@ def client_class_example():
         max_results=10
     )
     print(f"Science search found {science_results['total_results']} results")
+    
+    # Use client for AI assistant
+    ai_response = client.ask("Explain quantum computing in simple terms")
+    if ai_response["success"]:
+        print("✓ Client AI assistant worked")
+    else:
+        print(f"✗ Client AI assistant failed: {ai_response['error']}")
     print()
 
 
@@ -150,11 +175,21 @@ async def async_example():
     # Async URL fetching
     url_task = searxng.fetch_url_async("https://httpbin.org/json")
     
-    # Wait for both operations
-    search_results, url_content = await asyncio.gather(search_task, url_task)
+    # Async AI assistant
+    ai_task = searxng.ask_async("What are the benefits of async programming?")
+    
+    # Wait for all operations
+    search_results, url_content, ai_response = await asyncio.gather(
+        search_task, url_task, ai_task, return_exceptions=True
+    )
     
     print(f"Async search found {search_results['total_results']} results")
     print(f"Async URL fetch: {'✓' if url_content['success'] else '✗'}")
+    
+    if isinstance(ai_response, dict) and ai_response.get("success"):
+        print("✓ Async AI assistant responded")
+    else:
+        print("✗ Async AI assistant failed (API key needed)")
     print()
 
 
@@ -188,6 +223,7 @@ def main():
         advanced_search_example()
         url_fetching_example()
         parallel_url_fetching_example()
+        ai_assistant_example()
         client_class_example()
         engines_and_categories_example()
         json_output_example()

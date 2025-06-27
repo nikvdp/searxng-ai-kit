@@ -10,6 +10,7 @@ Basic Usage:
     >>> results = searxng.search("python tutorial")
     >>> content = searxng.fetch_url("https://example.com")
     >>> contents = searxng.fetch_urls(["https://site1.com", "https://site2.com"])
+    >>> response = searxng.ask("What are the latest developments in AI?")
 
 Advanced Usage:
     >>> # Customize search engines and parameters
@@ -24,6 +25,13 @@ Advanced Usage:
     >>> # Parallel URL fetching with concurrency control
     >>> urls = ["https://site1.com", "https://site2.com", "https://site3.com"]
     >>> contents = searxng.fetch_urls(urls, max_concurrent=2)
+    
+    >>> # AI assistant with custom model and endpoint
+    >>> response = searxng.ask(
+    ...     "Research renewable energy trends",
+    ...     model="openrouter/openai/gpt-4o-mini",
+    ...     base_url="https://openrouter.ai/api/v1"
+    ... )
 """
 
 from .client import (
@@ -33,6 +41,8 @@ from .client import (
     fetch_url_async,
     fetch_urls,
     fetch_urls_async,
+    ask,
+    ask_async,
     get_available_engines,
     get_categories,
     SearXNGClient,
@@ -50,6 +60,8 @@ __all__ = [
     "fetch_url_async",
     "fetch_urls", 
     "fetch_urls_async",
+    "ask",
+    "ask_async",
     "get_available_engines",
     "get_categories",
     "SearXNGClient",
