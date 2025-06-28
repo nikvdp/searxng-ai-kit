@@ -28,3 +28,6 @@ searx/version_frozen.py
 .python-version
 venv/
 devlog/
+
+# Environment files
+.env
