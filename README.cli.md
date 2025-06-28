@@ -255,9 +255,6 @@ searxng ask "Research renewable energy trends" --model "openai/gpt-4o-mini"
 # Get JSON output for programmatic use
 searxng ask "Compare Python vs JavaScript" --format json
 
-# Show tool usage (search queries, URLs being fetched)
-searxng ask "Research quantum computing" --verbose
-
 # Read prompt from stdin for longer questions
 echo "Analyze the current state of renewable energy adoption globally, including recent policy changes and technological breakthroughs" | searxng ask
 
