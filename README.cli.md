@@ -26,15 +26,19 @@ A command-line interface, Python library, and MCP server for the SearXNG privacy
 
 2. **Install the package:**
    ```bash
-   # With pip
-   pip install .
+   # With uv (recommended)
+   uv sync
    
-   # Or with uv
-   uv pip install .
+   # Or with pip (fallback)
+   pip install .
    ```
 
 3. **Verify installation:**
    ```bash
+   # With uv (if installed via uv sync)
+   uv run searxng --help
+   
+   # Direct command (if installed via pip or in PATH)
    searxng --help
    ```
 
@@ -153,42 +157,55 @@ searxng engines --help
 ### Test Basic Functionality
 ```bash
 # Test categories listing
-searxng categories
+uv run searxng categories
+# Or: searxng categories
 
 # Test clean engine listing (shows popular engines in 4 columns)
-searxng engines --common
+uv run searxng engines --common
+# Or: searxng engines --common
 
 # Test engine overview (compact category summary)
-searxng engines
+uv run searxng engines
+# Or: searxng engines
 
 # Test simple search
-searxng search "test query" --engines duckduckgo
+uv run searxng search "test query" --engines duckduckgo
+# Or: searxng search "test query" --engines duckduckgo
 ```
 
 ### Test Different Output Formats
 ```bash
 # Test human-readable output
-searxng search "python" --engines duckduckgo | head -20
+uv run searxng search "python" --engines duckduckgo | head -20
+# Or: searxng search "python" --engines duckduckgo | head -20
 
 # Test JSON output
-searxng search "programming" --engines duckduckgo --format json | jq .
+uv run searxng search "programming" --engines duckduckgo --format json | jq .
+# Or: searxng search "programming" --engines duckduckgo --format json | jq .
 ```
 
 ### Test Multiple Engines
 ```bash
 # Test with multiple engines
-searxng search "web development" --engines duckduckgo,startpage
+uv run searxng search "web development" --engines duckduckgo,startpage
+# Or: searxng search "web development" --engines duckduckgo,startpage
 
 # Test engine filtering
-searxng search "javascript" --category general --disable google,bing
+uv run searxng search "javascript" --category general --disable google,bing
+# Or: searxng search "javascript" --category general --disable google,bing
 ```
 
 ### Test Categories
 ```bash
 # Test different categories
-searxng search "machine learning" --category science --engines arxiv
-searxng search "react tutorial" --category it --engines github
-searxng search "funny cats" --category images --engines duckduckgo_images
+uv run searxng search "machine learning" --category science --engines arxiv
+# Or: searxng search "machine learning" --category science --engines arxiv
+
+uv run searxng search "react tutorial" --category it --engines github
+# Or: searxng search "react tutorial" --category it --engines github
+
+uv run searxng search "funny cats" --category images --engines duckduckgo_images
+# Or: searxng search "funny cats" --category images --engines duckduckgo_images
 ```
 
 ## Building Executable (Optional)
@@ -196,15 +213,28 @@ searxng search "funny cats" --category images --engines duckduckgo_images
 To create a standalone executable:
 
 ```bash
-# Install PyInstaller in development environment
-pip install pyinstaller
+# Sync development dependencies (includes PyInstaller)
+uv sync
 
-# Build with PyInstaller
-pyinstaller searxng.spec
+# Build with PyInstaller (no code signing)
+uv run pyinstaller searxng.spec
 
 # Test the executable
 ./dist/searxng --help
 ./dist/searxng search "test" --engines duckduckgo
+```
+
+### Code Signing (macOS only)
+
+For distribution on macOS, you can optionally enable code signing if you have a valid Developer ID certificate:
+
+```bash
+# Set environment variables for code signing
+export PYINSTALLER_CODESIGN_IDENTITY="Developer ID Application: Your Name"
+export PYINSTALLER_ENTITLEMENTS_FILE="entitlements.plist"  # optional
+
+# Build with code signing
+uv run pyinstaller searxng.spec
 ```
 
 **Note:** The executable may have some engine loading issues. The Python version is recommended for full functionality.
@@ -224,6 +254,19 @@ searxng ask "Research renewable energy trends" --model "openai/gpt-4o-mini"
 
 # Get JSON output for programmatic use
 searxng ask "Compare Python vs JavaScript" --format json
+
+# Show tool usage (search queries, URLs being fetched)
+searxng ask "Research quantum computing" --verbose
+
+# Read prompt from stdin for longer questions
+echo "Analyze the current state of renewable energy adoption globally, including recent policy changes and technological breakthroughs" | searxng ask
+
+# Interactive stdin mode
+searxng ask
+# (then type your question and press Ctrl+D)
+
+# Pipe from file
+searxng ask < my_research_question.txt
 ```
 
 ### API Key Configuration
