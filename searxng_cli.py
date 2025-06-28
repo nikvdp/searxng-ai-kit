@@ -906,6 +906,7 @@ async def ask_ai_async(
     prompt: str,
     model: str = "openai/o3",
     base_url: Optional[str] = None,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
     Core async function for asking AI with web search tools.
@@ -1026,6 +1027,21 @@ User request: {prompt}"""
             for tool_call in response.choices[0].message.tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
+                
+                # Log tool usage if verbose mode is enabled
+                if verbose:
+                    if function_name == "web_search":
+                        console.print(f"🔍 [cyan]Searching:[/cyan] {function_args.get('query', 'N/A')}")
+                    elif function_name == "multi_web_search":
+                        queries = function_args.get('queries', [])
+                        console.print(f"🔍 [cyan]Multi-search:[/cyan] {', '.join(queries[:3])}{'...' if len(queries) > 3 else ''}")
+                    elif function_name == "fetch_url":
+                        console.print(f"📄 [blue]Fetching:[/blue] {function_args.get('url', 'N/A')}")
+                    elif function_name == "fetch_urls":
+                        urls = function_args.get('urls', [])
+                        console.print(f"📄 [blue]Fetching {len(urls)} URLs:[/blue] {urls[0] if urls else 'N/A'}{'...' if len(urls) > 1 else ''}")
+                    else:
+                        console.print(f"🔧 [magenta]Tool:[/magenta] {function_name}")
                 
                 # Execute the tool using our existing handler
                 tool_result = await handle_tool_call(function_name, function_args)
@@ -1749,14 +1765,30 @@ def multi_search_command(
 
 @app.command()
 def ask(
-    prompt: str = typer.Argument(..., help="Question or research request"),
+    prompt: Optional[str] = typer.Argument(None, help="Question or research request (use '-' or omit to read from stdin)"),
     model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
     format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show tool usage (search queries, URLs being fetched)"),
 ):
     """Ask an AI assistant with access to web search and URL fetching tools."""
     import litellm
     import os
+    import sys
+    
+    # Handle stdin input for prompt
+    if prompt is None or prompt == "-":
+        if sys.stdin.isatty():
+            console.print("[yellow]Reading prompt from stdin (press Ctrl+D when done):[/yellow]")
+        try:
+            prompt = sys.stdin.read().strip()
+        except KeyboardInterrupt:
+            console.print("\n[red]Cancelled.[/red]")
+            raise typer.Exit(1)
+        
+        if not prompt:
+            console.print("[red]Error: No prompt provided.[/red]")
+            raise typer.Exit(1)
     
     # Check for API keys
     api_keys = {
@@ -1779,7 +1811,7 @@ def ask(
         console.print(f"[dim]Using model: {model}[/dim]")
         
         # Use the shared ask function
-        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
+        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url, verbose=verbose)
         
         if format_output.lower() == "json":
             console.print(json.dumps(result, indent=2, ensure_ascii=False))
