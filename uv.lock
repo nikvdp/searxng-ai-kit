@@ -1962,7 +1962,7 @@ wheels = [
 ]
 
 [[package]]
-name = "searxng-kit"
+name = "searxng-ai-kit"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

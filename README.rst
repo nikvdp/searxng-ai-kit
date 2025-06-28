@@ -1,29 +1,31 @@
 .. SPDX-License-Identifier: AGPL-3.0-or-later
 
-SearXNG Kit
-===========
+SearXNG AI Kit
+==============
 
-**This is a fork of SearXNG focused on providing a complete search toolkit.**
+**This is a fork of SearXNG focused on providing an AI-powered search toolkit.**
 
-**Privacy-respecting search for your terminal, code, and AI assistants**
+**AI-powered search for your terminal, code, and AI assistants**
 
-🔍 **CLI tool** - Search from your terminal using SearXNG's 180+ search engines
+🔍 **CLI tool** - Search from your terminal with AI-enhanced research capabilities
 
-🐍 **Python library** - Programmatic search and URL content retrieval
+🤖 **AI chat** - Ask questions and get comprehensive research using 180+ search engines
 
-🔌 **MCP server** - AI assistant integration with stdio and HTTP modes
+🐍 **Python library** - Programmatic search and AI-powered content retrieval
+
+🔌 **MCP server** - AI assistant integration with advanced research tools
 
 📦 **Standalone binaries** - Pre-built executables for Linux, Windows, and macOS
 
-⚡ **Fast and private** - No tracking, no ads, just results
+⚡ **Fast and private** - No tracking, no ads, just intelligent results
 
 **Installation:**
 
 .. code-block:: bash
 
    # Clone the repository
-   git clone https://github.com/nikvdp/searxng-kit
-   cd searxng-kit
+   git clone https://github.com/nikvdp/searxng-ai-kit
+   cd searxng-ai-kit
    
    # Install from source
    pip install .
@@ -35,6 +37,9 @@ SearXNG Kit
 
 .. code-block:: bash
 
+   # AI Chat: Research with intelligent analysis
+   searxng chat "What are the latest developments in AI?"
+   
    # CLI: Search with multiple engines
    searxng search "machine learning" --engines duckduckgo,startpage
    

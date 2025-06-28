@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SearXNG Kit Library Usage Examples
+SearXNG AI Kit Library Usage Examples
 
-This script demonstrates how to use the SearXNG Kit library for programmatic
-web search and URL content extraction.
+This script demonstrates how to use the SearXNG AI Kit library for programmatic
+web search, URL content extraction, and AI-powered research.
 """
 
 import asyncio
@@ -213,7 +213,7 @@ def json_output_example():
 
 def main():
     """Run all examples."""
-    print("SearXNG Kit Library Usage Examples")
+    print("SearXNG AI Kit Library Usage Examples")
     print("=" * 50)
     print()
     
@@ -236,7 +236,7 @@ def main():
         
     except Exception as e:
         print(f"Error running examples: {e}")
-        print("\nNote: Make sure SearXNG Kit engines are properly initialized.")
+        print("\nNote: Make sure SearXNG AI Kit engines are properly initialized.")
         print("Some examples may fail if search engines are not available.")
 
 

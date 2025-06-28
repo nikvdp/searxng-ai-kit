@@ -1,4 +1,4 @@
-name: SearXNG Kit
+name: SearXNG AI Kit
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    name: Build Kit (${{ matrix.platform }}-${{ matrix.arch }})
+    name: Build AI Kit (${{ matrix.platform }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -21,22 +21,22 @@ jobs:
             platform: linux
             arch: x64
             binary_name: searxng
-            asset_name: searxng-kit-linux-x64
+            asset_name: searxng-ai-kit-linux-x64
           - os: windows-latest
             platform: windows
             arch: x64
             binary_name: searxng.exe
-            asset_name: searxng-kit-windows-x64.exe
+            asset_name: searxng-ai-kit-windows-x64.exe
           - os: macos-latest
             platform: macos
             arch: x64
             binary_name: searxng
-            asset_name: searxng-kit-macos-x64
+            asset_name: searxng-ai-kit-macos-x64
           - os: macos-latest-xlarge
             platform: macos
             arch: arm64
             binary_name: searxng
-            asset_name: searxng-kit-macos-arm64
+            asset_name: searxng-ai-kit-macos-arm64
 
     steps:
     - name: Checkout code
@@ -146,19 +146,22 @@ jobs:
       run: |
         mkdir -p release
         # Move all artifacts to release directory
-        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "searxng-cli*" \) -exec cp {} release/ \;
+        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "searxng-ai-kit*" \) -exec cp {} release/ \;
         ls -la release/
 
     - name: Generate release notes
       id: release_notes
       run: |
         cat > release_notes.md << 'EOF'
-        # SearXNG Kit Release ${{ github.ref_name }}
+        # SearXNG AI Kit Release ${{ github.ref_name }}
         
-        A privacy-respecting command-line search tool powered by SearXNG.
+        An AI-powered command-line search tool powered by SearXNG with intelligent research capabilities.
         
         ## Features
+        - AI-powered research with web search capabilities
         - Search across 180+ search engines
+        - LLM integration with function calling (OpenAI, Anthropic, Google)
+        - MCP server for AI assistant integration
         - Support for multiple output formats (human-readable and JSON)
         - Engine selection and filtering
         - Category-based searching
@@ -167,37 +170,40 @@ jobs:
         ## Download
         Choose the appropriate binary for your platform:
         
-        - **Linux (x64)**: `searxng-kit-linux-x64.tar.gz`
-        - **Windows (x64)**: `searxng-kit-windows-x64.exe.zip` 
-        - **macOS (Intel)**: `searxng-kit-macos-x64.tar.gz`
-        - **macOS (Apple Silicon)**: `searxng-kit-macos-arm64.tar.gz`
+        - **Linux (x64)**: `searxng-ai-kit-linux-x64.tar.gz`
+        - **Windows (x64)**: `searxng-ai-kit-windows-x64.exe.zip` 
+        - **macOS (Intel)**: `searxng-ai-kit-macos-x64.tar.gz`
+        - **macOS (Apple Silicon)**: `searxng-ai-kit-macos-arm64.tar.gz`
         
         ## Quick Start
         ```bash
         # Extract the binary (Linux/macOS)
-        tar -xzf searxng-kit-*.tar.gz
+        tar -xzf searxng-ai-kit-*.tar.gz
         
         # Make executable and run
-        chmod +x searxng-kit
-        ./searxng-kit search "your query here"
+        chmod +x searxng-ai-kit
+        ./searxng-ai-kit search "your query here"
         
         # See all options
-        ./searxng-kit --help
+        ./searxng-ai-kit --help
         ```
         
         ## Usage Examples
         ```bash
+        # AI-powered research
+        ./searxng-ai-kit chat "What are the latest developments in quantum computing?"
+        
         # Basic search
-        ./searxng-kit search "python tutorial"
+        ./searxng-ai-kit search "python tutorial"
         
         # Search with specific engines
-        ./searxng-kit search "machine learning" --engines duckduckgo,startpage
+        ./searxng-ai-kit search "machine learning" --engines duckduckgo,startpage
         
         # JSON output for scripting
-        ./searxng-kit search "data science" --format json
+        ./searxng-ai-kit search "data science" --format json
         
         # List available engines
-        ./searxng-kit engines --common
+        ./searxng-ai-kit engines --common
         ```
         
         Built with ❤️ using SearXNG, Python, and PyInstaller.
@@ -207,7 +213,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        name: SearXNG Kit ${{ github.ref_name }}
+        name: SearXNG AI Kit ${{ github.ref_name }}
         body_path: release_notes.md
         draft: false
         prerelease: false
@@ -216,7 +222,7 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
 
   test:
-    name: Test Kit Build
+    name: Test AI Kit Build
     needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
@@ -225,16 +231,16 @@ jobs:
     - name: Download Linux artifact
       uses: actions/download-artifact@v4
       with:
-        name: searxng-kit-linux-x64
+        name: searxng-ai-kit-linux-x64
         path: test
         
-    - name: Test Kit functionality
+    - name: Test AI Kit functionality
       run: |
         cd test
-        tar -xzf searxng-kit-linux-x64.tar.gz
-        chmod +x searxng-kit-linux-x64
+        tar -xzf searxng-ai-kit-linux-x64.tar.gz
+        chmod +x searxng-ai-kit-linux-x64
         echo "Testing help command..."
-        ./searxng-kit-linux-x64 --help
+        ./searxng-ai-kit-linux-x64 --help
         echo "Testing engines command..."
-        ./searxng-kit-linux-x64 engines --common || echo "Engines test failed but continuing"
-        echo "Kit functionality test completed"
+        ./searxng-ai-kit-linux-x64 engines --common || echo "Engines test failed but continuing"
+        echo "AI Kit functionality test completed"
