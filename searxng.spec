@@ -126,6 +126,36 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Code signing configuration (optional for development)
+codesign_identity = os.environ.get('PYINSTALLER_CODESIGN_IDENTITY', None)
+entitlements_file = os.environ.get('PYINSTALLER_ENTITLEMENTS_FILE', None)
+
+exe_kwargs = {
+    'pyz': pyz,
+    'a_scripts': a.scripts,
+    'a_binaries': a.binaries,
+    'a_zipfiles': a.zipfiles,
+    'a_datas': a.datas,
+    'strip': False,
+    'upx': False,  # Disabled for cross-platform compatibility
+    'upx_exclude': [],
+    'name': binary_name,
+    'debug': False,
+    'bootloader_ignore_signals': False,
+    'runtime_tmpdir': None,
+    'console': True,
+    'disable_windowed_traceback': False,
+    'argv_emulation': False,
+    'target_arch': None,
+    'icon': None,  # Cross-platform compatibility
+}
+
+# Only add code signing if explicitly requested via environment variables
+if codesign_identity:
+    exe_kwargs['codesign_identity'] = codesign_identity
+if entitlements_file:
+    exe_kwargs['entitlements_file'] = entitlements_file
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -133,18 +163,5 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name=binary_name,
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,  # Disabled for cross-platform compatibility
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=True,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity='Developer ID Application',  # Use your Apple Developer cert
-    entitlements_file='entitlements.plist',  # Optional: for specific permissions
-    icon=None,  # Cross-platform compatibility
+    **{k: v for k, v in exe_kwargs.items() if k not in ['pyz', 'a_scripts', 'a_binaries', 'a_zipfiles', 'a_datas']},
 )
