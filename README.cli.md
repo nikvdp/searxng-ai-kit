@@ -1,14 +1,15 @@
-# SearXNG Kit
+# SearXNG AI Kit
 
-**Privacy-respecting search for your terminal, code, and AI assistants**
+**AI-powered search for your terminal, code, and AI assistants**
 
-A command-line interface, Python library, and MCP server for the SearXNG privacy-respecting metasearch engine. Search the web from your terminal, integrate into Python projects, or connect AI assistants with support for 180+ search engines.
+An AI-enhanced command-line interface, Python library, and MCP server for the SearXNG privacy-respecting metasearch engine. Research topics with AI assistance, search the web from your terminal, integrate into Python projects, or connect AI assistants with support for 180+ search engines.
 
 ## Features
 
-🔍 **CLI tool** - Search from your terminal using SearXNG's 180+ search engines  
-🐍 **Python library** - Programmatic search and URL content retrieval  
-🔌 **MCP server** - AI assistant integration with stdio and HTTP modes  
+🔍 **CLI tool** - Search from your terminal with AI-enhanced research capabilities  
+🤖 **AI chat** - Ask questions and get comprehensive research using 180+ search engines  
+🐍 **Python library** - Programmatic search and AI-powered content retrieval  
+🔌 **MCP server** - AI assistant integration with advanced research tools  
 📦 **Standalone binaries** - Pre-built executables for Linux, Windows, and macOS  
 
 ## Installation
@@ -20,8 +21,8 @@ A command-line interface, Python library, and MCP server for the SearXNG privacy
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/nikvdp/searxng-kit
-   cd searxng-kit
+   git clone https://github.com/nikvdp/searxng-ai-kit
+   cd searxng-ai-kit
    ```
 
 2. **Install the package:**
@@ -241,7 +242,7 @@ uv run pyinstaller searxng.spec
 
 ## AI Assistant Integration
 
-SearXNG Kit includes an AI assistant feature that combines web search capabilities with powerful language models. The assistant can perform parallel searches and fetch content from multiple URLs to provide comprehensive research and answers.
+SearXNG AI Kit includes an AI assistant feature that combines web search capabilities with powerful language models. The assistant can perform parallel searches and fetch content from multiple URLs to provide comprehensive research and answers.
 
 ### Ask Command
 
@@ -323,7 +324,7 @@ The assistant has access to these tools for research:
 
 ## MCP Server Integration
 
-SearXNG Kit includes a Model Context Protocol (MCP) server for AI application integration. This allows AI assistants like Claude to search the web and fetch URL content directly.
+SearXNG AI Kit includes a Model Context Protocol (MCP) server for AI application integration. This allows AI assistants like Claude to search the web and fetch URL content directly.
 
 ### Starting the MCP Server
 ```bash
@@ -409,7 +410,7 @@ search() {
 
 ## Python Library Usage
 
-SearXNG Kit can also be used as a Python library in your projects:
+SearXNG AI Kit can also be used as a Python library in your projects:
 
 ```python
 import searxng
