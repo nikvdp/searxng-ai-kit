@@ -1778,15 +1778,24 @@ def ask(
     # Handle stdin input for prompt
     if prompt is None or prompt == "-":
         if sys.stdin.isatty():
-            console.print("[yellow]Reading prompt from stdin (press Ctrl+D when done):[/yellow]")
+            # Interactive mode - show prompt on stderr so it doesn't interfere with piping
+            stderr_console = Console(file=sys.stderr, force_terminal=True)
+            stderr_console.print("[yellow]Reading prompt from stdin (press Ctrl+D when done):[/yellow]")
+        
         try:
-            prompt = sys.stdin.read().strip()
+            # Read all available input from stdin
+            prompt_lines = []
+            for line in sys.stdin:
+                prompt_lines.append(line.rstrip('\n\r'))
+            prompt = '\n'.join(prompt_lines).strip()
         except KeyboardInterrupt:
-            console.print("\n[red]Cancelled.[/red]")
+            stderr_console = Console(file=sys.stderr, force_terminal=True)
+            stderr_console.print("\n[red]Cancelled.[/red]")
             raise typer.Exit(1)
         
         if not prompt:
-            console.print("[red]Error: No prompt provided.[/red]")
+            stderr_console = Console(file=sys.stderr, force_terminal=True)
+            stderr_console.print("[red]Error: No prompt provided.[/red]")
             raise typer.Exit(1)
     
     # Check for API keys
@@ -1799,11 +1808,12 @@ def ask(
     
     # Check if we have at least one API key
     if not any(api_keys.values()):
-        console.print("[red]Error: No API keys found. Please set one of:[/red]")
-        console.print("  - OPENAI_API_KEY")
-        console.print("  - ANTHROPIC_API_KEY") 
-        console.print("  - GOOGLE_API_KEY")
-        console.print("  - OPENROUTER_API_KEY")
+        stderr_console = Console(file=sys.stderr, force_terminal=True)
+        stderr_console.print("[red]Error: No API keys found. Please set one of:[/red]")
+        stderr_console.print("  - OPENAI_API_KEY")
+        stderr_console.print("  - ANTHROPIC_API_KEY") 
+        stderr_console.print("  - GOOGLE_API_KEY")
+        stderr_console.print("  - OPENROUTER_API_KEY")
         raise typer.Exit(1)
     
     async def run_chat():
