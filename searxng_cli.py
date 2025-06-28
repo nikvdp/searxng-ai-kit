@@ -906,7 +906,6 @@ async def ask_ai_async(
     prompt: str,
     model: str = "openai/o3",
     base_url: Optional[str] = None,
-    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
     Core async function for asking AI with web search tools.
@@ -914,6 +913,7 @@ async def ask_ai_async(
     """
     import litellm
     import os
+    import sys
     
     # Check for API keys
     api_keys = {
@@ -1028,20 +1028,20 @@ User request: {prompt}"""
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
                 
-                # Log tool usage if verbose mode is enabled
-                if verbose:
-                    if function_name == "web_search":
-                        console.print(f"🔍 [cyan]Searching:[/cyan] {function_args.get('query', 'N/A')}")
-                    elif function_name == "multi_web_search":
-                        queries = function_args.get('queries', [])
-                        console.print(f"🔍 [cyan]Multi-search:[/cyan] {', '.join(queries[:3])}{'...' if len(queries) > 3 else ''}")
-                    elif function_name == "fetch_url":
-                        console.print(f"📄 [blue]Fetching:[/blue] {function_args.get('url', 'N/A')}")
-                    elif function_name == "fetch_urls":
-                        urls = function_args.get('urls', [])
-                        console.print(f"📄 [blue]Fetching {len(urls)} URLs:[/blue] {urls[0] if urls else 'N/A'}{'...' if len(urls) > 1 else ''}")
-                    else:
-                        console.print(f"🔧 [magenta]Tool:[/magenta] {function_name}")
+                # Log tool usage to stderr for shell piping friendliness
+                stderr_console = Console(file=sys.stderr, force_terminal=True)
+                if function_name == "web_search":
+                    stderr_console.print(f"🔍 [cyan]Searching:[/cyan] {function_args.get('query', 'N/A')}")
+                elif function_name == "multi_web_search":
+                    queries = function_args.get('queries', [])
+                    stderr_console.print(f"🔍 [cyan]Multi-search:[/cyan] {', '.join(queries[:3])}{'...' if len(queries) > 3 else ''}")
+                elif function_name == "fetch_url":
+                    stderr_console.print(f"📄 [blue]Fetching:[/blue] {function_args.get('url', 'N/A')}")
+                elif function_name == "fetch_urls":
+                    urls = function_args.get('urls', [])
+                    stderr_console.print(f"📄 [blue]Fetching {len(urls)} URLs:[/blue] {urls[0] if urls else 'N/A'}{'...' if len(urls) > 1 else ''}")
+                else:
+                    stderr_console.print(f"🔧 [magenta]Tool:[/magenta] {function_name}")
                 
                 # Execute the tool using our existing handler
                 tool_result = await handle_tool_call(function_name, function_args)
@@ -1769,7 +1769,6 @@ def ask(
     model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
     format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show tool usage (search queries, URLs being fetched)"),
 ):
     """Ask an AI assistant with access to web search and URL fetching tools."""
     import litellm
@@ -1808,18 +1807,23 @@ def ask(
         raise typer.Exit(1)
     
     async def run_chat():
-        console.print(f"[dim]Using model: {model}[/dim]")
+        # Log model info to stderr
+        stderr_console = Console(file=sys.stderr, force_terminal=True)
+        stderr_console.print(f"[dim]Using model: {model}[/dim]")
         
         # Use the shared ask function
-        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url, verbose=verbose)
+        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
         
         if format_output.lower() == "json":
-            console.print(json.dumps(result, indent=2, ensure_ascii=False))
+            # JSON output goes to stdout for piping
+            print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             if result["success"]:
-                console.print(f"\n[bold green]Response:[/bold green]\n{result['response']}")
+                # Just the response content goes to stdout for piping
+                print(result['response'])
             else:
-                console.print(f"[red]Error: {result['error']}[/red]")
+                # Errors go to stderr
+                stderr_console.print(f"[red]Error: {result['error']}[/red]")
                 raise typer.Exit(1)
     
     # Run the async chat function
