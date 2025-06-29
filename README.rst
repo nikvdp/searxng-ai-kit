@@ -37,8 +37,8 @@ SearXNG AI Kit
 
 .. code-block:: bash
 
-   # AI Chat: Research with intelligent analysis
-   searxng chat "What are the latest developments in AI?"
+   # AI Chat: Interactive research conversations
+   searxng chat
    
    # CLI: Search with multiple engines
    searxng search "machine learning" --engines duckduckgo,startpage

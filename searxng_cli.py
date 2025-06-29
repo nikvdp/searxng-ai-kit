@@ -1770,7 +1770,7 @@ def ask(
     format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
 ):
-    """Ask an AI assistant with access to web search and URL fetching tools."""
+    """Ask an AI assistant with web search tools (one-shot Q&A). For interactive conversations, use 'searxng chat'."""
     import litellm
     import os
     import sys
@@ -1838,6 +1838,274 @@ def ask(
     
     # Run the async chat function
     asyncio.run(run_chat())
+
+
+async def ask_ai_conversational_async(
+    messages: List[Dict[str, str]],
+    model: str = "openai/o3",
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Core async function for conversational AI chat with web search tools.
+    Takes a conversation history as input and returns the response with updated history.
+    """
+    import litellm
+    import os
+    
+    # Check for API keys
+    api_keys = {
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+    }
+    
+    # Check if we have at least one API key
+    if not any(api_keys.values()):
+        return {
+            "success": False,
+            "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+            "model": model,
+            "messages": messages
+        }
+    
+    # Define tools for the LLM (same as ask function)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web using SearXNG's search engines",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "category": {"type": "string", "description": "Search category", "default": "general"},
+                        "max_results": {"type": "integer", "description": "Maximum results", "default": 10}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "multi_web_search",
+                "description": "Search the web with multiple queries in parallel",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "queries": {"type": "array", "items": {"type": "string"}, "description": "Array of search queries"},
+                        "category": {"type": "string", "description": "Search category", "default": "general"},
+                        "max_results": {"type": "integer", "description": "Maximum results per query", "default": 10}
+                    },
+                    "required": ["queries"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_url",
+                "description": "Fetch and extract content from a single URL",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"url": {"type": "string", "description": "URL to fetch"}},
+                    "required": ["url"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_urls",
+                "description": "Fetch and extract content from multiple URLs in parallel",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"urls": {"type": "array", "items": {"type": "string"}, "description": "URLs to fetch"}},
+                    "required": ["urls"]
+                }
+            }
+        }
+    ]
+    
+    try:
+        # Add system message if not present
+        if not messages or messages[0].get("role") != "system":
+            system_message = {
+                "role": "system", 
+                "content": """You have access to powerful web search and URL fetching tools. When researching topics, you should:
+- Use multi_web_search to run multiple related searches in parallel for comprehensive coverage
+- Use fetch_urls to fetch content from multiple URLs simultaneously when you need detailed information
+- Be aggressive about using parallel tools to gather comprehensive data efficiently
+
+You are in a conversational mode, so refer to previous messages in the conversation history when relevant."""
+            }
+            messages = [system_message] + messages
+        
+        # Prepare completion arguments
+        completion_args = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto"
+        }
+        
+        # Add base_url if provided (overrides environment variable)
+        if base_url:
+            completion_args["base_url"] = base_url
+        
+        # Make initial request to the LLM
+        response = litellm.completion(**completion_args)
+        
+        # Handle tool calls iteratively
+        while response.choices[0].message.tool_calls:
+            # Add the assistant's message with tool calls
+            messages.append(response.choices[0].message.model_dump())
+            
+            # Execute each tool call
+            for tool_call in response.choices[0].message.tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                # Log tool usage to stderr for shell piping friendliness
+                stderr_console = Console(file=sys.stderr, force_terminal=True)
+                if function_name == "web_search":
+                    stderr_console.print(f"🔍 [cyan]Searching:[/cyan] {function_args.get('query', 'N/A')}")
+                elif function_name == "multi_web_search":
+                    queries = function_args.get('queries', [])
+                    stderr_console.print(f"🔍 [cyan]Multi-search:[/cyan] {', '.join(queries[:3])}{'...' if len(queries) > 3 else ''}")
+                elif function_name == "fetch_url":
+                    stderr_console.print(f"📄 [blue]Fetching:[/blue] {function_args.get('url', 'N/A')}")
+                elif function_name == "fetch_urls":
+                    urls = function_args.get('urls', [])
+                    stderr_console.print(f"📄 [blue]Fetching {len(urls)} URLs:[/blue] {urls[0] if urls else 'N/A'}{'...' if len(urls) > 1 else ''}")
+                else:
+                    stderr_console.print(f"🔧 [magenta]Tool:[/magenta] {function_name}")
+                
+                # Execute the tool using our existing handler
+                tool_result = await handle_tool_call(function_name, function_args)
+                
+                # Add tool result to messages
+                messages.append({
+                    "role": "tool",
+                    "content": tool_result,
+                    "tool_call_id": tool_call.id
+                })
+            
+            # Update completion args with new messages
+            completion_args["messages"] = messages
+            
+            # Get next response from LLM
+            response = litellm.completion(**completion_args)
+        
+        # Add the final assistant response to messages
+        final_response = response.choices[0].message.content
+        messages.append({"role": "assistant", "content": final_response})
+        
+        # Return the response and updated conversation history
+        return {
+            "success": True,
+            "model": model,
+            "response": final_response,
+            "messages": messages
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error calling {model}: {str(e)}",
+            "model": model,
+            "messages": messages
+        }
+
+
+@app.command()
+def chat(
+    model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
+    base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
+):
+    """Start an interactive chat session with AI assistant that has web search capabilities."""
+    import litellm
+    import os
+    import sys
+    
+    # Check for API keys
+    api_keys = {
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+    }
+    
+    # Check if we have at least one API key
+    if not any(api_keys.values()):
+        stderr_console = Console(file=sys.stderr, force_terminal=True)
+        stderr_console.print("[red]Error: No API keys found. Please set one of:[/red]")
+        stderr_console.print("  - OPENAI_API_KEY")
+        stderr_console.print("  - ANTHROPIC_API_KEY") 
+        stderr_console.print("  - GOOGLE_API_KEY")
+        stderr_console.print("  - OPENROUTER_API_KEY")
+        raise typer.Exit(1)
+    
+    async def run_interactive_chat():
+        # Initialize conversation history
+        messages = []
+        
+        # Setup console for input/output
+        stderr_console = Console(file=sys.stderr, force_terminal=True)
+        stderr_console.print(f"[dim]SearXNG AI Kit - Interactive Chat[/dim]")
+        stderr_console.print(f"[dim]Using model: {model}[/dim]")
+        stderr_console.print(f"[dim]Type 'exit', 'quit', or press Ctrl+C to end the conversation[/dim]")
+        stderr_console.print()
+        
+        try:
+            while True:
+                # Get user input
+                try:
+                    stderr_console.print("[bold green]You:[/bold green] ", end="")
+                    user_input = input().strip()
+                except (EOFError, KeyboardInterrupt):
+                    stderr_console.print("\n[yellow]Goodbye![/yellow]")
+                    break
+                
+                # Handle exit commands
+                if user_input.lower() in ['exit', 'quit', 'bye']:
+                    stderr_console.print("[yellow]Goodbye![/yellow]")
+                    break
+                
+                # Skip empty input
+                if not user_input:
+                    continue
+                
+                # Add user message to history
+                messages.append({"role": "user", "content": user_input})
+                
+                # Get AI response
+                result = await ask_ai_conversational_async(
+                    messages=messages,
+                    model=model,
+                    base_url=base_url
+                )
+                
+                if result["success"]:
+                    # Update conversation history with the response
+                    messages = result["messages"]
+                    
+                    # Display the response
+                    stderr_console.print(f"[bold blue]Assistant:[/bold blue] ", end="")
+                    print(result['response'])
+                    stderr_console.print()
+                else:
+                    # Display error
+                    stderr_console.print(f"[red]Error: {result['error']}[/red]")
+                    stderr_console.print()
+        
+        except Exception as e:
+            stderr_console.print(f"\n[red]Unexpected error: {str(e)}[/red]")
+    
+    # Run the interactive chat
+    asyncio.run(run_interactive_chat())
 
 
 def main():

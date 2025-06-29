@@ -244,7 +244,7 @@ uv run pyinstaller searxng.spec
 
 SearXNG AI Kit includes an AI assistant feature that combines web search capabilities with powerful language models. The assistant can perform parallel searches and fetch content from multiple URLs to provide comprehensive research and answers.
 
-### Ask Command
+### Ask Command (One-Shot Q&A)
 
 ```bash
 # Ask a question using the default o3 model
@@ -266,6 +266,42 @@ searxng ask
 # Pipe from file
 searxng ask < my_research_question.txt
 ```
+
+### Chat Command (Interactive Conversations)
+
+```bash
+# Start an interactive chat session
+searxng chat
+
+# Use a specific model for the conversation
+searxng chat --model "openai/gpt-4o-mini"
+
+# Use OpenRouter models
+searxng chat --model "openrouter/anthropic/claude-3.5-sonnet"
+
+# Use custom API endpoint
+searxng chat --base-url "https://api.openai.com/v1"
+```
+
+The chat command maintains conversation history and allows follow-up questions:
+
+```
+You: What's the weather like in Tokyo?
+Assistant: [searches for current Tokyo weather information]
+
+You: How about tomorrow?
+Assistant: [remembers we're discussing Tokyo weather and searches for tomorrow's forecast]
+
+You: What should I wear?
+Assistant: [provides clothing recommendations based on the weather information from previous searches]
+```
+
+**Chat Features:**
+- **Conversation Memory**: Remembers all previous messages in the session
+- **Context Awareness**: References earlier parts of the conversation
+- **Exit Commands**: Type `exit`, `quit`, `bye`, or press Ctrl+C to end
+- **Web Search**: Full access to search tools during conversations
+- **Tool Visibility**: Shows search queries and URL fetches in real-time
 
 ### API Key Configuration
 
