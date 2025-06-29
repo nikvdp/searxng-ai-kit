@@ -299,9 +299,17 @@ Assistant: [provides clothing recommendations based on the weather information f
 **Chat Features:**
 - **Conversation Memory**: Remembers all previous messages in the session
 - **Context Awareness**: References earlier parts of the conversation
+- **Chat History**: Automatically saves conversations to markdown files
+- **Model Display**: Shows model name (e.g., `o3`) instead of generic "Assistant"
+- **Progress Indicator**: Animated spinner while waiting for AI responses
 - **Exit Commands**: Type `exit`, `quit`, `bye`, or press Ctrl+C to end
 - **Web Search**: Full access to search tools during conversations
 - **Tool Visibility**: Shows search queries and URL fetches in real-time
+
+**Chat History Location:**
+- Saved to: `~/.local/share/searxng-ai-kit/chats/` (XDG Base Directory spec)
+- Format: `chat-YYYY-MM-DD_HH-MM-SS-modelname.md`
+- Example: `chat-2025-06-29_14-30-15-o3.md`
 
 ### API Key Configuration
 

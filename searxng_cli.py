@@ -2049,15 +2049,39 @@ def chat(
         raise typer.Exit(1)
     
     async def run_interactive_chat():
+        from datetime import datetime
+        from pathlib import Path
+        
         # Initialize conversation history
         messages = []
+        
+        # Setup chat history directory (XDG Base Directory spec)
+        data_home = os.getenv("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+        chat_dir = Path(data_home) / "searxng-ai-kit" / "chats"
+        chat_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate chat session filename with timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        model_name = model.split('/')[-1] if '/' in model else model
+        chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
+        
+        # Initialize markdown file
+        with open(chat_file, 'w', encoding='utf-8') as f:
+            f.write(f"# SearXNG AI Kit Chat Session\n\n")
+            f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+            f.write(f"**Model:** {model}  \n")
+            f.write(f"**Session:** {timestamp}  \n\n")
+            f.write("---\n\n")
         
         # Setup console for input/output
         stderr_console = Console(file=sys.stderr, force_terminal=True)
         stderr_console.print(f"[dim]SearXNG AI Kit - Interactive Chat[/dim]")
         stderr_console.print(f"[dim]Using model: {model}[/dim]")
+        stderr_console.print(f"[dim]Chat history: {chat_file}[/dim]")
         stderr_console.print(f"[dim]Type 'exit', 'quit', or press Ctrl+C to end the conversation[/dim]")
         stderr_console.print()
+        
+        # No need for custom spinner function - we'll use Rich's live updating
         
         try:
             while True:
@@ -2081,25 +2105,44 @@ def chat(
                 # Add user message to history
                 messages.append({"role": "user", "content": user_input})
                 
-                # Get AI response
-                result = await ask_ai_conversational_async(
-                    messages=messages,
-                    model=model,
-                    base_url=base_url
-                )
+                # Save user message to markdown file
+                with open(chat_file, 'a', encoding='utf-8') as f:
+                    f.write(f"## You\n\n{user_input}\n\n")
+                
+                # Show spinner while getting AI response
+                from rich.spinner import Spinner
+                from rich.live import Live
+                
+                spinner = Spinner("dots", text="[dim]Thinking... [/dim]")
+                
+                with Live(spinner, console=stderr_console, refresh_per_second=10):
+                    # Get AI response
+                    result = await ask_ai_conversational_async(
+                        messages=messages,
+                        model=model,
+                        base_url=base_url
+                    )
                 
                 if result["success"]:
                     # Update conversation history with the response
                     messages = result["messages"]
                     
-                    # Display the response
-                    stderr_console.print(f"[bold blue]Assistant:[/bold blue] ", end="")
+                    # Display the response with model name instead of "Assistant"
+                    stderr_console.print(f"[bold blue]{model_name}:[/bold blue] ", end="")
                     print(result['response'])
                     stderr_console.print()
+                    
+                    # Save assistant response to markdown file
+                    with open(chat_file, 'a', encoding='utf-8') as f:
+                        f.write(f"## {model_name}\n\n{result['response']}\n\n")
                 else:
                     # Display error
                     stderr_console.print(f"[red]Error: {result['error']}[/red]")
                     stderr_console.print()
+                    
+                    # Save error to markdown file
+                    with open(chat_file, 'a', encoding='utf-8') as f:
+                        f.write(f"## Error\n\n{result['error']}\n\n")
         
         except Exception as e:
             stderr_console.print(f"\n[red]Unexpected error: {str(e)}[/red]")
