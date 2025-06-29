@@ -1701,7 +1701,7 @@ def ask(
     async def run_chat():
         # Log model info to stderr
         stderr_console = Console(file=sys.stderr, force_terminal=True)
-        stderr_console.print(f"[dim]Using model: {model}[/dim]")
+        stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
         
         # Use the shared ask function
         result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
@@ -1960,7 +1960,7 @@ def chat(
         # Setup console for input/output
         stderr_console = Console(file=sys.stderr, force_terminal=True)
         stderr_console.print(f"[dim]SearXNG AI Kit - Interactive Chat[/dim]")
-        stderr_console.print(f"[dim]Using model: {model}[/dim]")
+        stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
         stderr_console.print(f"[dim]Chat history: {chat_file}[/dim]")
         stderr_console.print(f"[dim]Type 'exit', 'quit', or press Ctrl+C to end the conversation[/dim]")
         stderr_console.print()
