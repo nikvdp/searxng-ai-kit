@@ -61,7 +61,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["searxng*"]
+include = ["searxng*", "searx*"]
 
 [tool.setuptools]
 py-modules = ["searxng_cli"]
