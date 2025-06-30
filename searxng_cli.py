@@ -1944,7 +1944,6 @@ def chat(
         # Handle stdin input if requested
         first_message = None
         if initial_message == "-":
-            import sys
             if sys.stdin.isatty():
                 stderr_console = Console(file=sys.stderr, force_terminal=True)
                 stderr_console.print("[red]Error: stdin is not available (no pipe detected)[/red]")
@@ -1990,7 +1989,6 @@ def chat(
         signal.signal(signal.SIGTERM, signal_handler)
         
         # Enable bracketed paste mode for proper multi-line input handling
-        import sys
         import termios
         import tty
         
