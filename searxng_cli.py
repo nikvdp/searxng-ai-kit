@@ -1983,9 +1983,12 @@ def chat(
         def signal_handler(signum, frame):
             nonlocal shutdown_requested
             shutdown_requested = True
+            # For SIGINT, let it raise KeyboardInterrupt as usual
+            if signum == signal.SIGINT:
+                raise KeyboardInterrupt()
             
         # Install signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
+        # Only handle SIGTERM with custom handler, let SIGINT work normally
         signal.signal(signal.SIGTERM, signal_handler)
         
         # Enable bracketed paste mode for proper multi-line input handling
@@ -2101,11 +2104,6 @@ def chat(
         
         try:
             while True:
-                # Check for shutdown request
-                if shutdown_requested:
-                    stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
-                    break
-                
                 # Get user input with multi-line support
                 try:
                     user_input = get_multiline_input("[bold green]You:[/bold green] ")
