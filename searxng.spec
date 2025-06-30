@@ -126,9 +126,16 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# Code signing configuration (optional for development)
-codesign_identity = os.environ.get('PYINSTALLER_CODESIGN_IDENTITY', None)
-entitlements_file = os.environ.get('PYINSTALLER_ENTITLEMENTS_FILE', None)
+# Code signing configuration (disabled by default, enable via env vars)
+# Only enable code signing if explicitly requested via environment variables
+# This prevents auto-detection issues and makes builds work by default
+codesign_identity = os.environ.get('PYINSTALLER_CODESIGN_IDENTITY')
+entitlements_file = os.environ.get('PYINSTALLER_ENTITLEMENTS_FILE')
+
+# Explicitly disable code signing if no identity is provided
+# This prevents PyInstaller from auto-detecting signing identities
+if not codesign_identity:
+    codesign_identity = False
 
 exe_kwargs = {
     'pyz': pyz,
@@ -151,7 +158,8 @@ exe_kwargs = {
 }
 
 # Only add code signing if explicitly requested via environment variables
-if codesign_identity:
+# codesign_identity will be False if not set, which disables signing
+if codesign_identity and codesign_identity is not False:
     exe_kwargs['codesign_identity'] = codesign_identity
 if entitlements_file:
     exe_kwargs['entitlements_file'] = entitlements_file
