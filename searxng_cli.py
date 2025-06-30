@@ -1906,6 +1906,7 @@ async def ask_ai_conversational_async(
 
 @app.command()
 def chat(
+    initial_message: Optional[str] = typer.Argument(None, help="Initial message to send (use '-' to read from stdin)"),
     model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
 ):
@@ -1939,6 +1940,18 @@ def chat(
         # Initialize conversation history
         messages = []
         
+        # Handle stdin input if requested
+        first_message = None
+        if initial_message == "-":
+            import sys
+            if sys.stdin.isatty():
+                stderr_console = Console(file=sys.stderr, force_terminal=True)
+                stderr_console.print("[red]Error: stdin is not available (no pipe detected)[/red]")
+                raise typer.Exit(1)
+            first_message = sys.stdin.read().strip()
+        elif initial_message:
+            first_message = initial_message
+        
         # Setup chat history directory (XDG Base Directory spec)
         data_home = os.getenv("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
         chat_dir = Path(data_home) / "searxng-ai-kit" / "chats"
@@ -1965,7 +1978,52 @@ def chat(
         stderr_console.print(f"[dim]Type 'exit', 'quit', or press Ctrl+C to end the conversation[/dim]")
         stderr_console.print()
         
-        # No need for custom spinner function - we'll use Rich's live updating
+        # Process initial message if provided
+        if first_message:
+            messages.append({"role": "user", "content": first_message})
+            
+            # Save initial message to markdown file
+            with open(chat_file, 'a', encoding='utf-8') as f:
+                f.write(f"## You\n\n{first_message}\n\n")
+            
+            # Display the initial message
+            stderr_console.print(f"[bold green]You:[/bold green] {first_message}")
+            stderr_console.print()
+            
+            # Show spinner while getting AI response
+            from rich.spinner import Spinner
+            from rich.live import Live
+            
+            spinner = Spinner("dots", text="[dim]Thinking... [/dim]")
+            
+            with Live(spinner, console=stderr_console, refresh_per_second=10):
+                # Get AI response
+                result = await ask_ai_conversational_async(
+                    messages=messages,
+                    model=model,
+                    base_url=base_url
+                )
+            
+            if result["success"]:
+                # Update conversation history with the response
+                messages = result["messages"]
+                
+                # Display the response with model name instead of "Assistant"
+                stderr_console.print(f"[bold blue]{model_name}:[/bold blue] ", end="")
+                print(result['response'])
+                stderr_console.print()
+                
+                # Save assistant response to markdown file
+                with open(chat_file, 'a', encoding='utf-8') as f:
+                    f.write(f"## {model_name}\n\n{result['response']}\n\n")
+            else:
+                # Display error
+                stderr_console.print(f"[red]Error: {result['error']}[/red]")
+                stderr_console.print()
+                
+                # Save error to markdown file
+                with open(chat_file, 'a', encoding='utf-8') as f:
+                    f.write(f"## Error\n\n{result['error']}\n\n")
         
         try:
             while True:
