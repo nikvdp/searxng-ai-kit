@@ -1934,6 +1934,7 @@ def chat(
         raise typer.Exit(1)
     
     async def run_interactive_chat():
+        import signal
         from datetime import datetime
         from pathlib import Path
         
@@ -1978,6 +1979,16 @@ def chat(
         stderr_console.print(f"[dim]Type 'exit', 'quit', or press Ctrl+C to end the conversation[/dim]")
         stderr_console.print()
         
+        # Setup signal handling for graceful shutdown
+        shutdown_requested = False
+        def signal_handler(signum, frame):
+            nonlocal shutdown_requested
+            shutdown_requested = True
+            
+        # Install signal handlers
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
         # Process initial message if provided
         if first_message:
             messages.append({"role": "user", "content": first_message})
@@ -1996,13 +2007,22 @@ def chat(
             
             spinner = Spinner("dots", text="[dim]Thinking... [/dim]")
             
-            with Live(spinner, console=stderr_console, refresh_per_second=10):
-                # Get AI response
-                result = await ask_ai_conversational_async(
-                    messages=messages,
-                    model=model,
-                    base_url=base_url
-                )
+            try:
+                with Live(spinner, console=stderr_console, refresh_per_second=10):
+                    # Check for shutdown request during AI processing
+                    if shutdown_requested:
+                        stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
+                        return
+                    
+                    # Get AI response
+                    result = await ask_ai_conversational_async(
+                        messages=messages,
+                        model=model,
+                        base_url=base_url
+                    )
+            except KeyboardInterrupt:
+                stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
+                return
             
             if result["success"]:
                 # Update conversation history with the response
@@ -2027,6 +2047,11 @@ def chat(
         
         try:
             while True:
+                # Check for shutdown request
+                if shutdown_requested:
+                    stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
+                    break
+                
                 # Get user input
                 try:
                     stderr_console.print("[bold green]You:[/bold green] ", end="")
@@ -2057,13 +2082,22 @@ def chat(
                 
                 spinner = Spinner("dots", text="[dim]Thinking... [/dim]")
                 
-                with Live(spinner, console=stderr_console, refresh_per_second=10):
-                    # Get AI response
-                    result = await ask_ai_conversational_async(
-                        messages=messages,
-                        model=model,
-                        base_url=base_url
-                    )
+                try:
+                    with Live(spinner, console=stderr_console, refresh_per_second=10):
+                        # Check for shutdown request during AI processing
+                        if shutdown_requested:
+                            stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
+                            break
+                        
+                        # Get AI response
+                        result = await ask_ai_conversational_async(
+                            messages=messages,
+                            model=model,
+                            base_url=base_url
+                        )
+                except KeyboardInterrupt:
+                    stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
+                    break
                 
                 if result["success"]:
                     # Update conversation history with the response
