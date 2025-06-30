@@ -1989,6 +1989,62 @@ def chat(
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
+        # Enable bracketed paste mode for proper multi-line input handling
+        import sys
+        import termios
+        import tty
+        
+        def enable_bracketed_paste():
+            if sys.stdin.isatty():
+                sys.stdout.write("\x1b[?2004h")  # Enable bracketed paste
+                sys.stdout.flush()
+        
+        def disable_bracketed_paste():
+            if sys.stdin.isatty():
+                sys.stdout.write("\x1b[?2004l")  # Disable bracketed paste
+                sys.stdout.flush()
+        
+        def get_multiline_input(prompt=""):
+            """Get input that properly handles bracketed paste and multi-line content."""
+            stderr_console.print(prompt, end="")
+            
+            lines = []
+            in_paste = False
+            
+            try:
+                while True:
+                    line = input()
+                    
+                    # Check for bracketed paste start/end sequences
+                    if line.startswith("\x1b[200~"):
+                        in_paste = True
+                        line = line[6:]  # Remove paste start sequence
+                    
+                    if line.endswith("\x1b[201~"):
+                        in_paste = False
+                        line = line[:-6]  # Remove paste end sequence
+                        lines.append(line)
+                        break
+                    
+                    lines.append(line)
+                    
+                    # If not in paste mode and we have content, break
+                    if not in_paste and lines and lines[-1].strip():
+                        break
+                    
+                    # Show continuation prompt for multi-line input
+                    if in_paste:
+                        continue
+                    else:
+                        stderr_console.print("... ", end="")
+                        
+            except (EOFError, KeyboardInterrupt):
+                return None
+            
+            return "\n".join(lines).strip()
+        
+        enable_bracketed_paste()
+        
         # Process initial message if provided
         if first_message:
             messages.append({"role": "user", "content": first_message})
@@ -2052,10 +2108,13 @@ def chat(
                     stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
                     break
                 
-                # Get user input
+                # Get user input with multi-line support
                 try:
-                    stderr_console.print("[bold green]You:[/bold green] ", end="")
-                    user_input = input().strip()
+                    user_input = get_multiline_input("[bold green]You:[/bold green] ")
+                    if user_input is None:  # Handle Ctrl-C/Ctrl-D
+                        stderr_console.print("\n[yellow]Goodbye![/yellow]")
+                        break
+                    user_input = user_input.strip()
                 except (EOFError, KeyboardInterrupt):
                     stderr_console.print("\n[yellow]Goodbye![/yellow]")
                     break
@@ -2122,6 +2181,9 @@ def chat(
         
         except Exception as e:
             stderr_console.print(f"\n[red]Unexpected error: {str(e)}[/red]")
+        finally:
+            # Clean up bracketed paste mode
+            disable_bracketed_paste()
     
     # Run the interactive chat
     asyncio.run(run_interactive_chat())
