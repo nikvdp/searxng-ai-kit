@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
+import subprocess
+import platform
 
 import httpx
 import typer
@@ -43,6 +45,7 @@ import searx.webadapter
 from searx.search.models import EngineRef, SearchQuery
 from searx.search.processors import PROCESSORS
 from searx.results import ResultContainer
+from searx.compat import tomllib
 import threading
 from timeit import default_timer
 from uuid import uuid4
@@ -89,6 +92,268 @@ COMMON_ENGINES = [
     "github", "gitlab", "stackoverflow",
     "arxiv", "google_scholar", "pubmed",
 ]
+
+
+# Profile management for API keys and configurations
+class ProfileManager:
+    """Manages user profiles for API keys and configurations."""
+    
+    def __init__(self):
+        self.config_dir = self._get_config_dir()
+        self.profiles_file = self.config_dir / "profiles.toml"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _get_config_dir(self) -> Path:
+        """Get XDG-compliant config directory."""
+        if platform.system() == "Windows":
+            config_home = os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))
+        else:
+            config_home = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        return Path(config_home) / "searxng"
+    
+    def _get_default_model(self, provider_type: str) -> str:
+        """Get default model for each provider type."""
+        defaults = {
+            "openrouter": "openrouter/openai/o3",
+            "anthropic": "anthropic/claude-3-5-sonnet-20241022", 
+            "openai": "openai/o3",
+            "google": "gemini/gemini-2.0-flash-exp",
+        }
+        return defaults.get(provider_type, "openai/o3")
+    
+    def _get_default_base_url(self, provider_type: str) -> Optional[str]:
+        """Get default base URL for each provider type."""
+        defaults = {
+            "openrouter": "https://openrouter.ai/api/v1",
+            "anthropic": None,  # Use LiteLLM default
+            "openai": None,     # Use LiteLLM default
+            "google": None,     # Use LiteLLM default
+        }
+        return defaults.get(provider_type)
+    
+    def _load_profiles(self) -> Dict[str, Any]:
+        """Load profiles from TOML file."""
+        if not self.profiles_file.exists():
+            return {"profiles": {}, "settings": {}}
+        
+        try:
+            with open(self.profiles_file, "rb") as f:
+                return tomllib.load(f)
+        except Exception as e:
+            console.print(f"[red]Error loading profiles: {e}[/red]")
+            return {"profiles": {}, "settings": {}}
+    
+    def _save_profiles(self, data: Dict[str, Any]):
+        """Save profiles to TOML file."""
+        import toml
+        try:
+            with open(self.profiles_file, "w") as f:
+                toml.dump(data, f)
+            # Set restrictive permissions
+            os.chmod(self.profiles_file, 0o600)
+        except Exception as e:
+            console.print(f"[red]Error saving profiles: {e}[/red]")
+            raise typer.Exit(1)
+    
+    def add_profile(self, name: str, provider_type: str, api_key: str, 
+                   base_url: Optional[str] = None, model: Optional[str] = None, 
+                   force: bool = False):
+        """Add a new profile."""
+        data = self._load_profiles()
+        
+        # Check if profile exists
+        if name in data["profiles"] and not force:
+            if not typer.confirm(f"Profile '{name}' already exists. Overwrite?"):
+                console.print("[yellow]Profile not added.[/yellow]")
+                return
+        
+        # Set defaults
+        if not base_url:
+            base_url = self._get_default_base_url(provider_type)
+        if not model:
+            model = self._get_default_model(provider_type)
+        
+        # Create profile
+        profile = {
+            "type": provider_type,
+            "api_key": api_key,
+            "default_model": model,
+        }
+        if base_url:
+            profile["base_url"] = base_url
+        
+        data["profiles"][name] = profile
+        
+        # Set as default if it's the first profile
+        if not data["settings"].get("default_profile"):
+            data["settings"]["default_profile"] = name
+        
+        self._save_profiles(data)
+        console.print(f"[green]Profile '{name}' added successfully.[/green]")
+        
+        if not data["settings"].get("default_profile") or data["settings"]["default_profile"] == name:
+            console.print(f"[blue]Profile '{name}' set as default.[/blue]")
+    
+    def list_profiles(self):
+        """List all profiles."""
+        data = self._load_profiles()
+        if not data["profiles"]:
+            console.print("[yellow]No profiles found.[/yellow]")
+            return
+        
+        table = Table(title="SearXNG Profiles")
+        table.add_column("Name", style="cyan")
+        table.add_column("Type", style="magenta")
+        table.add_column("Model", style="green")
+        table.add_column("Base URL", style="blue")
+        table.add_column("Default", style="yellow")
+        
+        default_profile = data["settings"].get("default_profile")
+        for name, profile in data["profiles"].items():
+            is_default = "✓" if name == default_profile else ""
+            base_url = profile.get("base_url", "Default")
+            table.add_row(name, profile["type"], profile["default_model"], base_url, is_default)
+        
+        console.print(table)
+    
+    def show_profile(self, name: str):
+        """Show details of a specific profile."""
+        data = self._load_profiles()
+        if name not in data["profiles"]:
+            console.print(f"[red]Profile '{name}' not found.[/red]")
+            raise typer.Exit(1)
+        
+        profile = data["profiles"][name]
+        is_default = name == data["settings"].get("default_profile")
+        
+        console.print(f"\n[bold]Profile: {name}[/bold]")
+        console.print(f"Type: {profile['type']}")
+        console.print(f"Model: {profile['default_model']}")
+        console.print(f"Base URL: {profile.get('base_url', 'Default')}")
+        console.print(f"API Key: {profile['api_key'][:8]}...")
+        console.print(f"Default: {'Yes' if is_default else 'No'}")
+    
+    def remove_profile(self, name: str):
+        """Remove a profile."""
+        data = self._load_profiles()
+        if name not in data["profiles"]:
+            console.print(f"[red]Profile '{name}' not found.[/red]")
+            raise typer.Exit(1)
+        
+        if not typer.confirm(f"Remove profile '{name}'?"):
+            console.print("[yellow]Profile not removed.[/yellow]")
+            return
+        
+        del data["profiles"][name]
+        
+        # Clear default if removing default profile
+        if data["settings"].get("default_profile") == name:
+            data["settings"]["default_profile"] = None
+            # Set new default if profiles remain
+            if data["profiles"]:
+                new_default = next(iter(data["profiles"]))
+                data["settings"]["default_profile"] = new_default
+                console.print(f"[blue]Profile '{new_default}' set as new default.[/blue]")
+        
+        self._save_profiles(data)
+        console.print(f"[green]Profile '{name}' removed.[/green]")
+    
+    def set_default(self, name: str):
+        """Set default profile."""
+        data = self._load_profiles()
+        if name not in data["profiles"]:
+            console.print(f"[red]Profile '{name}' not found.[/red]")
+            raise typer.Exit(1)
+        
+        data["settings"]["default_profile"] = name
+        self._save_profiles(data)
+        console.print(f"[green]Profile '{name}' set as default.[/green]")
+    
+    def edit_profile(self, name: str):
+        """Edit a profile using system editor."""
+        data = self._load_profiles()
+        if name not in data["profiles"]:
+            console.print(f"[red]Profile '{name}' not found.[/red]")
+            raise typer.Exit(1)
+        
+        editor = os.environ.get("EDITOR", "nano" if platform.system() != "Windows" else "notepad")
+        try:
+            subprocess.run([editor, str(self.profiles_file)])
+            console.print(f"[green]Profile file opened in {editor}.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error opening editor: {e}[/red]")
+            raise typer.Exit(1)
+    
+    def test_profile(self, name: str):
+        """Test a profile by making a simple API call."""
+        data = self._load_profiles()
+        if name not in data["profiles"]:
+            console.print(f"[red]Profile '{name}' not found.[/red]")
+            raise typer.Exit(1)
+        
+        profile = data["profiles"][name]
+        
+        # Test with a simple query
+        console.print(f"[blue]Testing profile '{name}'...[/blue]")
+        
+        # Set environment variables temporarily
+        old_env = {}
+        try:
+            # Map provider types to environment variables
+            env_map = {
+                "openrouter": "OPENROUTER_API_KEY",
+                "anthropic": "ANTHROPIC_API_KEY", 
+                "openai": "OPENAI_API_KEY",
+                "google": "GOOGLE_API_KEY",
+            }
+            
+            env_key = env_map.get(profile["type"])
+            if env_key:
+                old_env[env_key] = os.environ.get(env_key)
+                os.environ[env_key] = profile["api_key"]
+            
+            if profile.get("base_url"):
+                old_env["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL")
+                os.environ["OPENAI_BASE_URL"] = profile["base_url"]
+            
+            # Make test call
+            import litellm
+            response = litellm.completion(
+                model=profile["default_model"],
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            
+            console.print(f"[green]✓ Profile '{name}' is working![/green]")
+            console.print(f"Model: {profile['default_model']}")
+            console.print(f"Response: {response.choices[0].message.content}")
+            
+        except Exception as e:
+            console.print(f"[red]✗ Profile '{name}' test failed: {e}[/red]")
+        finally:
+            # Restore environment
+            for key, value in old_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    
+    def get_profile(self, name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get profile by name or default profile."""
+        data = self._load_profiles()
+        
+        if name:
+            return data["profiles"].get(name)
+        else:
+            default_name = data["settings"].get("default_profile")
+            if default_name:
+                return data["profiles"].get(default_name)
+        
+        return None
+
+
+# Global profile manager instance
+profile_manager = ProfileManager()
 
 
 class CLISearch:
@@ -1648,14 +1913,51 @@ def multi_search_command(
 @app.command()
 def ask(
     prompt: Optional[str] = typer.Argument(None, help="Question or research request (use '-' or omit to read from stdin)"),
-    model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use (format: provider/model)"),
     format_output: str = typer.Option("human", "--format", "-f", help="Output format: human or json"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Profile to use for API key and configuration"),
 ):
     """Ask an AI assistant with web search tools (one-shot Q&A). For interactive conversations, use 'searxng chat'."""
     import litellm
     import os
     import sys
+    
+    # Resolve profile and get configuration
+    profile_config = None
+    if profile:
+        profile_config = profile_manager.get_profile(profile)
+        if not profile_config:
+            console.print(f"[red]Error: Profile '{profile}' not found.[/red]")
+            raise typer.Exit(1)
+    elif not model and not base_url:
+        # No explicit model/base_url and no profile specified, try default profile
+        profile_config = profile_manager.get_profile()  # Gets default profile
+    
+    # Apply profile configuration if available
+    if profile_config:
+        # Set model from profile if not explicitly provided
+        if not model:
+            model = profile_config["default_model"]
+        
+        # Set base_url from profile if not explicitly provided
+        if not base_url and profile_config.get("base_url"):
+            base_url = profile_config["base_url"]
+        
+        # Set API key environment variable based on provider type
+        env_map = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY", 
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        env_key = env_map.get(profile_config["type"])
+        if env_key and not os.environ.get(env_key):
+            os.environ[env_key] = profile_config["api_key"]
+    
+    # Set default model if still not set
+    if not model:
+        model = "openai/o3"
     
     # Handle stdin input for prompt
     if prompt is None or prompt == "-":
@@ -1907,13 +2209,50 @@ async def ask_ai_conversational_async(
 @app.command()
 def chat(
     initial_message: Optional[str] = typer.Argument(None, help="Initial message to send (use '-' to read from stdin)"),
-    model: str = typer.Option("openai/o3", "--model", "-m", help="Model to use (format: provider/model)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use (format: provider/model)"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom API base URL (overrides OPENAI_BASE_URL env var)"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Profile to use for API key and configuration"),
 ):
     """Start an interactive chat session with AI assistant that has web search capabilities."""
     import litellm
     import os
     import sys
+    
+    # Resolve profile and get configuration
+    profile_config = None
+    if profile:
+        profile_config = profile_manager.get_profile(profile)
+        if not profile_config:
+            console.print(f"[red]Error: Profile '{profile}' not found.[/red]")
+            raise typer.Exit(1)
+    elif not model and not base_url:
+        # No explicit model/base_url and no profile specified, try default profile
+        profile_config = profile_manager.get_profile()  # Gets default profile
+    
+    # Apply profile configuration if available
+    if profile_config:
+        # Set model from profile if not explicitly provided
+        if not model:
+            model = profile_config["default_model"]
+        
+        # Set base_url from profile if not explicitly provided
+        if not base_url and profile_config.get("base_url"):
+            base_url = profile_config["base_url"]
+        
+        # Set API key environment variable based on provider type
+        env_map = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY", 
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        env_key = env_map.get(profile_config["type"])
+        if env_key and not os.environ.get(env_key):
+            os.environ[env_key] = profile_config["api_key"]
+    
+    # Set default model if still not set
+    if not model:
+        model = "openai/o3"
     
     # Check for API keys
     api_keys = {
@@ -2183,6 +2522,59 @@ def chat(
     
     # Run the interactive chat
     asyncio.run(run_interactive_chat())
+
+
+# Profile management commands
+profiles_app = typer.Typer(help="Manage user profiles for API keys and configurations")
+
+@profiles_app.command()
+def add(
+    name: str = typer.Argument(..., help="Profile name"),
+    api_key: str = typer.Argument(..., help="API key"),
+    type: str = typer.Option(..., "--type", "-t", help="Provider type: openrouter, anthropic, openai, google"),
+    base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom base URL"),
+    model: Optional[str] = typer.Option(None, "--model", help="Default model"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing profile without confirmation"),
+):
+    """Add a new profile."""
+    if type not in ["openrouter", "anthropic", "openai", "google"]:
+        console.print(f"[red]Error: Invalid provider type '{type}'. Must be one of: openrouter, anthropic, openai, google[/red]")
+        raise typer.Exit(1)
+    
+    profile_manager.add_profile(name, type, api_key, base_url, model, force)
+
+@profiles_app.command()
+def list():
+    """List all profiles."""
+    profile_manager.list_profiles()
+
+@profiles_app.command()
+def show(name: str = typer.Argument(..., help="Profile name")):
+    """Show profile details."""
+    profile_manager.show_profile(name)
+
+@profiles_app.command()
+def remove(name: str = typer.Argument(..., help="Profile name")):
+    """Remove a profile."""
+    profile_manager.remove_profile(name)
+
+@profiles_app.command()
+def set_default(name: str = typer.Argument(..., help="Profile name")):
+    """Set default profile."""
+    profile_manager.set_default(name)
+
+@profiles_app.command()
+def edit(name: str = typer.Argument(..., help="Profile name")):
+    """Edit a profile using system editor."""
+    profile_manager.edit_profile(name)
+
+@profiles_app.command()
+def test(name: str = typer.Argument(..., help="Profile name")):
+    """Test a profile by making an API call."""
+    profile_manager.test_profile(name)
+
+# Add profiles command group to main app
+app.add_typer(profiles_app, name="profiles")
 
 
 def main():
