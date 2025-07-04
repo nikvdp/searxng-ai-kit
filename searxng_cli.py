@@ -198,6 +198,7 @@ class ProfileManager:
         data = self._load_profiles()
         if not data["profiles"]:
             console.print("[yellow]No profiles found.[/yellow]")
+            console.print(f"[dim]Profiles are stored in: {self.profiles_file}[/dim]")
             return
         
         table = Table(title="SearXNG Profiles")
@@ -214,6 +215,7 @@ class ProfileManager:
             table.add_row(name, profile["type"], profile["default_model"], base_url, is_default)
         
         console.print(table)
+        console.print(f"[dim]Profiles stored in: {self.profiles_file}[/dim]")
     
     def show_profile(self, name: str):
         """Show details of a specific profile."""
@@ -2530,7 +2532,7 @@ profile_app = typer.Typer(help="Manage user profiles for API keys and configurat
 def add(
     name: str = typer.Argument(..., help="Profile name"),
     api_key: str = typer.Argument(..., help="API key"),
-    type: str = typer.Option(..., "--type", "-t", help="Provider type: openrouter, anthropic, openai, google"),
+    type: str = typer.Option("openai", "--type", "-t", help="Provider type: openrouter, anthropic, openai, google"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom base URL"),
     model: Optional[str] = typer.Option(None, "--model", help="Default model"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing profile without confirmation"),
