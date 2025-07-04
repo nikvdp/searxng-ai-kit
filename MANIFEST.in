@@ -1,9 +1,0 @@
-include README.md
-include LICENSE
-include searxng.spec
-include entitlements.plist
-include clean.sh
-include test-macos-build.sh
-include build_searxng_wheel.py
-recursive-include wheels *.whl
-recursive-include searxng *.py *.md
