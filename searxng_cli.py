@@ -2524,9 +2524,9 @@ def chat(
 
 
 # Profile management commands
-profiles_app = typer.Typer(help="Manage user profiles for API keys and configurations")
+profile_app = typer.Typer(help="Manage user profiles for API keys and configurations")
 
-@profiles_app.command()
+@profile_app.command()
 def add(
     name: str = typer.Argument(..., help="Profile name"),
     api_key: str = typer.Argument(..., help="API key"),
@@ -2542,38 +2542,38 @@ def add(
     
     profile_manager.add_profile(name, type, api_key, base_url, model, force)
 
-@profiles_app.command()
-def list_profiles():
+@profile_app.command(name="list")
+def list_cmd():
     """List all profiles."""
     profile_manager.list_profiles()
 
-@profiles_app.command()
+@profile_app.command()
 def show(name: str = typer.Argument(..., help="Profile name")):
     """Show profile details."""
     profile_manager.show_profile(name)
 
-@profiles_app.command()
+@profile_app.command()
 def remove(name: str = typer.Argument(..., help="Profile name")):
     """Remove a profile."""
     profile_manager.remove_profile(name)
 
-@profiles_app.command()
+@profile_app.command()
 def set_default(name: str = typer.Argument(..., help="Profile name")):
     """Set default profile."""
     profile_manager.set_default(name)
 
-@profiles_app.command()
+@profile_app.command()
 def edit(name: str = typer.Argument(..., help="Profile name")):
     """Edit a profile using system editor."""
     profile_manager.edit_profile(name)
 
-@profiles_app.command()
+@profile_app.command()
 def test(name: str = typer.Argument(..., help="Profile name")):
     """Test a profile by making an API call."""
     profile_manager.test_profile(name)
 
-# Add profiles command group to main app
-app.add_typer(profiles_app, name="profiles")
+# Add profile command group to main app
+app.add_typer(profile_app, name="profile")
 
 
 def main():
