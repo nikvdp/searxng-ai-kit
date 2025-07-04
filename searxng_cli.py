@@ -2543,7 +2543,7 @@ def add(
     profile_manager.add_profile(name, type, api_key, base_url, model, force)
 
 @profiles_app.command()
-def list():
+def list_profiles():
     """List all profiles."""
     profile_manager.list_profiles()
 
