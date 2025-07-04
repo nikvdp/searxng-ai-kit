@@ -20,8 +20,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-# Add the current directory to Python path so we can import searx
-sys.path.insert(0, str(Path(__file__).parent))
+# SearXNG is now installed as external dependency via git+https://github.com/searxng/searxng.git
 
 # Configure logging to suppress noisy errors from SearXNG engines
 def configure_logging():
