@@ -34,6 +34,7 @@ dependencies = [
     "uvicorn>=0.24.0",
     # SearXNG from external hosted wheel
     "searxng @ http://persistory.s3.us-west-1.wasabisys.com/share/searxng-2025.6.27+9ee1ca89e-py3-none-any.whl",
+    "toml>=0.10.2",
 ]
 
 [project.scripts]
