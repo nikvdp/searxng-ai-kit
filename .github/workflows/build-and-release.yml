@@ -1,0 +1,238 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Build weekly to get latest SearXNG updates (Sundays at 2 AM UTC)
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create a release even for non-tag builds'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  build-searxng-wheel:
+    name: Build SearXNG Wheel
+    runs-on: ubuntu-latest
+    outputs:
+      wheel-filename: ${{ steps.build.outputs.wheel-filename }}
+      wheel-hash: ${{ steps.build.outputs.wheel-hash }}
+      searxng-commit: ${{ steps.build.outputs.searxng-commit }}
+      release-tag: ${{ steps.build.outputs.release-tag }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install uv
+
+    - name: Sync project dependencies
+      run: uv sync
+
+    - name: Build SearXNG wheel
+      id: build
+      run: |
+        # Build SearXNG wheel from latest commit
+        uv run python build_searxng_wheel.py
+        
+        # Read metadata
+        METADATA=$(cat wheels/build_metadata.json)
+        WHEEL_FILENAME=$(echo "$METADATA" | jq -r '.wheel_file')
+        WHEEL_HASH=$(echo "$METADATA" | jq -r '.wheel_hash')
+        SEARXNG_COMMIT=$(echo "$METADATA" | jq -r '.searxng_commit')
+        BUILD_DATE=$(date +%Y-%m-%d)
+        RELEASE_TAG="searxng-wheels-${BUILD_DATE}-${SEARXNG_COMMIT:0:8}"
+        
+        echo "wheel-filename=$WHEEL_FILENAME" >> $GITHUB_OUTPUT
+        echo "wheel-hash=$WHEEL_HASH" >> $GITHUB_OUTPUT
+        echo "searxng-commit=$SEARXNG_COMMIT" >> $GITHUB_OUTPUT
+        echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+        
+        echo "Built wheel: $WHEEL_FILENAME"
+        echo "SHA256: $WHEEL_HASH"
+        echo "SearXNG commit: $SEARXNG_COMMIT"
+        echo "Release tag: $RELEASE_TAG"
+
+    - name: Upload wheel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: searxng-wheel
+        path: |
+          wheels/*.whl
+          wheels/build_metadata.json
+        retention-days: 30
+
+  build-final-package:
+    name: Build Final Package
+    runs-on: ubuntu-latest
+    needs: build-searxng-wheel
+    outputs:
+      package-filename: ${{ steps.build.outputs.package-filename }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install uv build
+
+    - name: Download SearXNG wheel artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: searxng-wheel
+        path: wheels/
+
+    - name: Generate configuration from templates
+      run: |
+        python generate_config.py \
+          --metadata wheels/build_metadata.json \
+          --repo-owner ${{ github.repository_owner }} \
+          --repo-name ${{ github.event.repository.name }} \
+          --tag ${{ needs.build-searxng-wheel.outputs.release-tag }}
+
+    - name: Build final package
+      id: build
+      run: |
+        # Build the searxng-ai-kit package
+        python -m build --wheel
+        
+        # Get package filename
+        PACKAGE_FILENAME=$(ls dist/*.whl | xargs basename)
+        echo "package-filename=$PACKAGE_FILENAME" >> $GITHUB_OUTPUT
+        echo "Built package: $PACKAGE_FILENAME"
+
+    - name: Upload package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: searxng-ai-kit-package
+        path: |
+          dist/*.whl
+          pyproject.toml
+          requirements.txt
+        retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-searxng-wheel, build-final-package]
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') || github.event.inputs.force_release == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        
+        # Copy SearXNG wheel
+        cp searxng-wheel/*.whl release-assets/
+        cp searxng-wheel/build_metadata.json release-assets/
+        
+        # Copy final package
+        cp searxng-ai-kit-package/*.whl release-assets/
+        cp searxng-ai-kit-package/pyproject.toml release-assets/generated-pyproject.toml
+        cp searxng-ai-kit-package/requirements.txt release-assets/generated-requirements.txt
+        
+        ls -la release-assets/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ needs.build-searxng-wheel.outputs.release-tag }}
+        name: "SearXNG Wheels ${{ needs.build-searxng-wheel.outputs.release-tag }}"
+        body: |
+          ## SearXNG AI Kit Release
+          
+          This release contains:
+          - **SearXNG wheel** built from latest upstream commit
+          - **SearXNG AI Kit package** that uses the bundled SearXNG wheel
+          
+          ### SearXNG Details
+          - **Commit**: `${{ needs.build-searxng-wheel.outputs.searxng-commit }}`
+          - **Wheel**: `${{ needs.build-searxng-wheel.outputs.wheel-filename }}`
+          - **SHA256**: `${{ needs.build-searxng-wheel.outputs.wheel-hash }}`
+          
+          ### Installation
+          ```bash
+          # Install the complete package
+          pip install ${{ needs.build-final-package.outputs.package-filename }}
+          
+          # Or install with hash verification
+          pip install -r generated-requirements.txt
+          ```
+          
+          ### Usage
+          ```bash
+          searxng search "your query" --engines duckduckgo
+          searxng mcp-server  # MCP server mode
+          searxng chat        # Interactive AI chat
+          ```
+          
+          Built from commit: ${{ github.sha }}
+        files: release-assets/*
+        draft: false
+        prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-installation:
+    name: Test Installation
+    runs-on: ubuntu-latest
+    needs: [build-searxng-wheel, build-final-package]
+    
+    steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Download package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: searxng-ai-kit-package
+        path: package/
+
+    - name: Test package installation
+      run: |
+        # Install the package
+        pip install package/*.whl
+        
+        # Test basic functionality
+        searxng --help
+        searxng engines --common
+        searxng categories
+        
+        # Test Python library import
+        python -c "import searxng; print('Library import successful')"
+        
+        echo "Installation test completed successfully!"

@@ -11,11 +11,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import hashlib
+import json
+from datetime import datetime
 from pathlib import Path
 
 # SearXNG git repository and commit hash
 SEARXNG_REPO = "https://github.com/searxng/searxng.git"
-SEARXNG_COMMIT = "9ee1ca89e73e1bdbafda711ff004b9298084b9be"
+# SEARXNG_COMMIT will be fetched dynamically as latest commit
+SEARXNG_COMMIT = None  # Will be set to latest commit
 
 # SearXNG dependencies that must be pre-installed
 SEARXNG_DEPS = [
@@ -58,6 +62,48 @@ def run_command(cmd, cwd=None, check=True):
     
     return result
 
+def fetch_latest_commit():
+    """Fetch the latest commit hash from SearXNG repository."""
+    print("Fetching latest commit from SearXNG repository...")
+    result = run_command([
+        "git", "ls-remote", "--heads", SEARXNG_REPO, "master"
+    ])
+    
+    # Parse the output: "commit_hash\trefs/heads/master"
+    commit_hash = result.stdout.strip().split('\t')[0]
+    print(f"Latest SearXNG commit: {commit_hash}")
+    return commit_hash
+
+def calculate_wheel_hash(wheel_path):
+    """Calculate SHA256 hash of the wheel file."""
+    print(f"Calculating SHA256 hash for {wheel_path}...")
+    sha256_hash = hashlib.sha256()
+    
+    with open(wheel_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(chunk)
+    
+    hash_value = sha256_hash.hexdigest()
+    print(f"SHA256 hash: {hash_value}")
+    return hash_value
+
+def save_build_metadata(wheel_file, commit_hash, output_dir):
+    """Save build metadata to JSON file."""
+    metadata = {
+        "searxng_commit": commit_hash,
+        "build_date": datetime.now().isoformat(),
+        "wheel_file": str(wheel_file.name),
+        "wheel_size": wheel_file.stat().st_size,
+        "wheel_hash": calculate_wheel_hash(wheel_file)
+    }
+    
+    metadata_file = Path(output_dir) / "build_metadata.json"
+    with open(metadata_file, "w") as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"Build metadata saved to: {metadata_file}")
+    return metadata
+
 def create_build_env():
     """Create a temporary build environment."""
     print("Creating temporary build environment...")
@@ -89,7 +135,7 @@ def install_dependencies(pip_exe):
         print(f"Installing {dep}...")
         run_command([pip_exe, "install", dep])
 
-def clone_searxng(build_env):
+def clone_searxng(build_env, commit_hash):
     """Clone SearXNG repository at specific commit."""
     print(f"Cloning SearXNG repository...")
     searxng_dir = os.path.join(build_env, "searxng")
@@ -98,7 +144,13 @@ def clone_searxng(build_env):
     run_command(["git", "clone", SEARXNG_REPO, searxng_dir])
     
     # Checkout specific commit
-    run_command(["git", "checkout", SEARXNG_COMMIT], cwd=searxng_dir)
+    print(f"Checking out commit: {commit_hash}")
+    run_command(["git", "checkout", commit_hash], cwd=searxng_dir)
+    
+    # Get commit info for metadata
+    result = run_command(["git", "log", "-1", "--format=%H %s"], cwd=searxng_dir)
+    commit_info = result.stdout.strip()
+    print(f"Commit info: {commit_info}")
     
     return searxng_dir
 
@@ -137,24 +189,32 @@ def main():
     output_dir = script_dir / "wheels"
     
     try:
+        # Fetch latest commit hash
+        commit_hash = fetch_latest_commit()
+        
         # Create build environment
         build_env, python_exe, pip_exe = create_build_env()
         
         # Install dependencies
         install_dependencies(pip_exe)
         
-        # Clone SearXNG
-        searxng_dir = clone_searxng(build_env)
+        # Clone SearXNG at latest commit
+        searxng_dir = clone_searxng(build_env, commit_hash)
         
         # Build wheel
         wheel_file = build_wheel(pip_exe, searxng_dir, output_dir)
+        
+        # Save build metadata
+        metadata = save_build_metadata(wheel_file, commit_hash, output_dir)
         
         print("\n" + "=" * 50)
         print("SUCCESS: SearXNG wheel built successfully!")
         print(f"Wheel file: {wheel_file}")
         print(f"Size: {wheel_file.stat().st_size / (1024*1024):.1f} MB")
+        print(f"Commit: {commit_hash}")
+        print(f"SHA256: {metadata['wheel_hash']}")
         
-        return str(wheel_file)
+        return str(wheel_file), metadata
         
     except Exception as e:
         print(f"ERROR: {e}")
