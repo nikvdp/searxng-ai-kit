@@ -10,6 +10,7 @@ This script helps developers set up their local environment by:
 This is useful for development and testing before CI runs.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -53,35 +54,41 @@ def main():
     wheel_file = wheel_files[0]
     local_wheel_url = f"file://{wheel_file.absolute()}"
 
-    # Generate config with local file URL
-    run_command(
-        [
-            sys.executable,
-            "generate_config.py",
-            "--metadata",
-            str(wheels_dir / "build_metadata.json"),
-            "--repo-owner",
-            "local",
-            "--repo-name",
-            "development",
-            "--wheel-filename",
-            wheel_file.name,
-        ],
-        cwd=script_dir,
-    )
-
-    # Replace GitHub URL with local file URL in generated files
+    # For local development, directly generate config from template with local file URL
+    # Read the template
+    template_file = script_dir / "pyproject.toml.template"
+    with open(template_file, "r") as f:
+        template_content = f.read()
+    
+    # Replace the placeholder with absolute file URL
+    absolute_wheel_path = wheel_file.absolute()
+    local_wheel_url = f"file://{absolute_wheel_path}"
+    
+    # Replace template variables
+    final_content = template_content.replace("{SEARXNG_WHEEL_URL}", local_wheel_url)
+    
+    # Write the final pyproject.toml
     pyproject_file = script_dir / "pyproject.toml"
-    with open(pyproject_file, "r") as f:
-        content = f.read()
-
-    # Replace GitHub URL with local file URL
-    content = content.replace(
-        "https://github.com/local/development/releases/download/", "file://"
-    ).replace(f"searxng-wheels-{wheel_file.name}/", str(wheels_dir.absolute()) + "/")
-
     with open(pyproject_file, "w") as f:
-        f.write(content)
+        f.write(final_content)
+    
+    # Also generate requirements.txt for consistency
+    req_template_file = script_dir / "requirements.txt.template"
+    if req_template_file.exists():
+        with open(req_template_file, "r") as f:
+            req_template = f.read()
+        
+        # Read metadata for hash
+        metadata_file = wheels_dir / "build_metadata.json"
+        with open(metadata_file, "r") as f:
+            metadata = json.load(f)
+        
+        req_content = req_template.replace("{SEARXNG_WHEEL_URL}", local_wheel_url)
+        req_content = req_content.replace("{SEARXNG_WHEEL_HASH}", metadata["wheel_hash"])
+        
+        req_file = script_dir / "requirements.txt"
+        with open(req_file, "w") as f:
+            f.write(req_content)
 
     print(f"Generated config files with local wheel: {local_wheel_url}")
 
