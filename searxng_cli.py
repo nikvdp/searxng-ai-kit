@@ -1451,7 +1451,7 @@ def mcp_server(
     remote: bool = typer.Option(False, "--remote", help="Start as remote HTTP server instead of stdio"),
     host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to (default: 0.0.0.0)"),
     port: int = typer.Option(8000, "--port", help="Port to bind to (default: 8000)"),
-    claude: bool = typer.Option(False, "--claude", help="Output Claude Code compatible JSON launch string instead of starting server"),
+    claude_cfg: bool = typer.Option(False, "--claude-cfg", help="Output Claude Code compatible JSON config instead of starting server"),
 ):
     """Start the MCP server for Model Context Protocol integration.
     
@@ -1483,10 +1483,10 @@ def mcp_server(
     - JINA_API_KEY: Optional API key for enhanced Jina.ai features
     
     Usage with Claude Code:
-    claude "$(searxng mcp-server --claude)"
+    claude --mcp-config "$(searxng mcp-server --claude-cfg)"
     """
-    # Handle --claude flag to output JSON launch string
-    if claude:
+    # Handle --claude-cfg flag to output JSON config
+    if claude_cfg:
         launch_config = {
             "mcpServers": {
                 "searxng": {
@@ -1496,8 +1496,8 @@ def mcp_server(
                 }
             }
         }
-        # Output the launch string in the format Claude Code expects
-        print(f"--mcp-config '{json.dumps(launch_config)}'")
+        # Output just the JSON config for Claude Code
+        print(json.dumps(launch_config))
         return
     
     try:
