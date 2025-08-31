@@ -9,7 +9,7 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 import subprocess
 import platform
@@ -355,6 +355,67 @@ class ProfileManager:
 
 # Global profile manager instance
 profile_manager = ProfileManager()
+
+
+def initialize_ai_config(
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+    profile: Optional[str] = None
+) -> Tuple[str, Optional[str]]:
+    """
+    Initialize AI configuration from profiles and environment.
+    
+    This is the single source of truth for AI configuration across:
+    - CLI commands (ask, chat)
+    - MCP server (stdio and HTTP)
+    - Library interface
+    
+    Args:
+        model: Explicit model override
+        base_url: Explicit base URL override
+        profile: Specific profile name to use (None = use default)
+    
+    Returns:
+        Tuple of (model, base_url) configured and ready to use
+    """
+    import os
+    
+    # Load profile configuration
+    profile_config = None
+    if profile:
+        profile_config = profile_manager.get_profile(profile)
+        if not profile_config:
+            raise ValueError(f"Profile '{profile}' not found")
+    elif not model and not base_url:
+        # No explicit overrides, try default profile
+        profile_config = profile_manager.get_profile()  # Gets default profile
+    
+    # Apply profile configuration if available
+    if profile_config:
+        # Set model from profile if not explicitly provided
+        if not model:
+            model = profile_config.get("default_model")
+        
+        # Set base_url from profile if not explicitly provided  
+        if not base_url and profile_config.get("base_url"):
+            base_url = profile_config["base_url"]
+        
+        # Set API key environment variable based on provider type
+        env_map = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY",
+        }
+        env_key = env_map.get(profile_config.get("type"))
+        if env_key and not os.environ.get(env_key):
+            os.environ[env_key] = profile_config["api_key"]
+    
+    # Set default model if still not set
+    if not model:
+        model = "openai/gpt-5"
+    
+    return model, base_url
 
 
 class CLISearch:
@@ -1170,12 +1231,15 @@ def get_mcp_tools():
                     },
                     "model": {
                         "type": "string", 
-                        "description": "Model to use (default: openai/gpt-5)",
-                        "default": "openai/gpt-5"
+                        "description": "Model to use (default: from profile or openai/gpt-5)"
                     },
                     "base_url": {
                         "type": "string",
-                        "description": "Custom API base URL (optional, overrides OPENAI_BASE_URL env var)"
+                        "description": "Custom API base URL (optional, overrides profile setting)"
+                    },
+                    "profile": {
+                        "type": "string",
+                        "description": "Profile name to use for API keys and config (default: uses default profile)"
                     }
                 },
                 "required": ["prompt"],
@@ -1186,18 +1250,28 @@ def get_mcp_tools():
 
 async def ask_ai_async(
     prompt: str,
-    model: str = "openai/gpt-5",
+    model: Optional[str] = None,
     base_url: Optional[str] = None,
+    profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Core async function for asking AI with web search tools.
-    This is used by both the CLI command and the library interface.
+    This is used by both the CLI command, MCP server, and library interface.
+    
+    Args:
+        prompt: The question or research request
+        model: Optional model override (defaults to profile or "openai/gpt-5")
+        base_url: Optional base URL override  
+        profile: Optional profile name to use (defaults to default profile)
     """
     import litellm
     import os
     import sys
     
-    # Check for API keys
+    # Initialize configuration from profiles
+    model, base_url = initialize_ai_config(model, base_url, profile)
+    
+    # Check for API keys after profile initialization
     api_keys = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
@@ -1435,11 +1509,12 @@ async def handle_tool_call(name: str, arguments: dict):
         if not prompt:
             return json.dumps({"error": "Prompt is required"})
         
-        model = arguments.get("model", "openai/gpt-5")
+        model = arguments.get("model")  # Will use profile default if not specified
         base_url = arguments.get("base_url")  # Optional custom base URL
+        profile = arguments.get("profile")  # Optional profile name
         
-        # Use the shared ask_ai_async function instead of duplicating logic
-        result = await ask_ai_async(prompt, model, base_url)
+        # Use the shared ask_ai_async function with profile support
+        result = await ask_ai_async(prompt, model, base_url, profile)
         return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
     
     else:
@@ -1943,42 +2018,6 @@ def ask(
     import os
     import sys
     
-    # Resolve profile and get configuration
-    profile_config = None
-    if profile:
-        profile_config = profile_manager.get_profile(profile)
-        if not profile_config:
-            console.print(f"[red]Error: Profile '{profile}' not found.[/red]")
-            raise typer.Exit(1)
-    elif not model and not base_url:
-        # No explicit model/base_url and no profile specified, try default profile
-        profile_config = profile_manager.get_profile()  # Gets default profile
-    
-    # Apply profile configuration if available
-    if profile_config:
-        # Set model from profile if not explicitly provided
-        if not model:
-            model = profile_config["default_model"]
-        
-        # Set base_url from profile if not explicitly provided
-        if not base_url and profile_config.get("base_url"):
-            base_url = profile_config["base_url"]
-        
-        # Set API key environment variable based on provider type
-        env_map = {
-            "openrouter": "OPENROUTER_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY", 
-            "openai": "OPENAI_API_KEY",
-            "google": "GOOGLE_API_KEY",
-        }
-        env_key = env_map.get(profile_config["type"])
-        if env_key and not os.environ.get(env_key):
-            os.environ[env_key] = profile_config["api_key"]
-    
-    # Set default model if still not set
-    if not model:
-        model = "openai/gpt-5"
-    
     # Handle stdin input for prompt
     if prompt is None or prompt == "-":
         if sys.stdin.isatty():
@@ -2002,31 +2041,14 @@ def ask(
             stderr_console.print("[red]Error: No prompt provided.[/red]")
             raise typer.Exit(1)
     
-    # Check for API keys
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
-    }
-    
-    # Check if we have at least one API key
-    if not any(api_keys.values()):
-        stderr_console = Console(file=sys.stderr, force_terminal=True)
-        stderr_console.print("[red]Error: No API keys found. Please set one of:[/red]")
-        stderr_console.print("  - OPENAI_API_KEY")
-        stderr_console.print("  - ANTHROPIC_API_KEY") 
-        stderr_console.print("  - GOOGLE_API_KEY")
-        stderr_console.print("  - OPENROUTER_API_KEY")
-        raise typer.Exit(1)
-    
     async def run_chat():
-        # Log model info to stderr
-        stderr_console = Console(file=sys.stderr, force_terminal=True)
-        stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
+        # Use the shared ask function with profile support
+        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url, profile=profile)
         
-        # Use the shared ask function
-        result = await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
+        # Log model info to stderr if successful
+        if result.get("success"):
+            stderr_console = Console(file=sys.stderr, force_terminal=True)
+            stderr_console.print(f"[dim]Using model: [blue]{result.get('model', 'unknown')}[/blue][/dim]")
         
         if format_output.lower() == "json":
             # JSON output goes to stdout for piping
@@ -2046,17 +2068,27 @@ def ask(
 
 async def ask_ai_conversational_async(
     messages: List[Dict[str, str]],
-    model: str = "openai/gpt-5",
+    model: Optional[str] = None,
     base_url: Optional[str] = None,
+    profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Core async function for conversational AI chat with web search tools.
     Takes a conversation history as input and returns the response with updated history.
+    
+    Args:
+        messages: Conversation history as list of role/content dicts
+        model: Optional model override (defaults to profile or "openai/gpt-5")
+        base_url: Optional base URL override
+        profile: Optional profile name to use (defaults to default profile)
     """
     import litellm
     import os
     
-    # Check for API keys
+    # Initialize configuration from profiles
+    model, base_url = initialize_ai_config(model, base_url, profile)
+    
+    # Check for API keys after profile initialization
     api_keys = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
@@ -2238,59 +2270,8 @@ def chat(
     import os
     import sys
     
-    # Resolve profile and get configuration
-    profile_config = None
-    if profile:
-        profile_config = profile_manager.get_profile(profile)
-        if not profile_config:
-            console.print(f"[red]Error: Profile '{profile}' not found.[/red]")
-            raise typer.Exit(1)
-    elif not model and not base_url:
-        # No explicit model/base_url and no profile specified, try default profile
-        profile_config = profile_manager.get_profile()  # Gets default profile
-    
-    # Apply profile configuration if available
-    if profile_config:
-        # Set model from profile if not explicitly provided
-        if not model:
-            model = profile_config["default_model"]
-        
-        # Set base_url from profile if not explicitly provided
-        if not base_url and profile_config.get("base_url"):
-            base_url = profile_config["base_url"]
-        
-        # Set API key environment variable based on provider type
-        env_map = {
-            "openrouter": "OPENROUTER_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY", 
-            "openai": "OPENAI_API_KEY",
-            "google": "GOOGLE_API_KEY",
-        }
-        env_key = env_map.get(profile_config["type"])
-        if env_key and not os.environ.get(env_key):
-            os.environ[env_key] = profile_config["api_key"]
-    
-    # Set default model if still not set
-    if not model:
-        model = "openai/gpt-5"
-    
-    # Check for API keys
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"), 
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
-    }
-    
-    # Check if we have at least one API key
-    if not any(api_keys.values()):
-        stderr_console = Console(file=sys.stderr, force_terminal=True)
-        stderr_console.print("[red]Error: No API keys found. Please set one of:[/red]")
-        stderr_console.print("  - OPENAI_API_KEY")
-        stderr_console.print("  - ANTHROPIC_API_KEY") 
-        stderr_console.print("  - GOOGLE_API_KEY")
-        stderr_console.print("  - OPENROUTER_API_KEY")
-        raise typer.Exit(1)
+    # Initialize configuration from profiles (this handles everything!)
+    model, base_url = initialize_ai_config(model, base_url, profile)
     
     async def run_interactive_chat():
         import signal
@@ -2434,7 +2415,8 @@ def chat(
                     result = await ask_ai_conversational_async(
                         messages=messages,
                         model=model,
-                        base_url=base_url
+                        base_url=base_url,
+                        profile=profile
                     )
             except KeyboardInterrupt:
                 stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
@@ -2507,7 +2489,8 @@ def chat(
                         result = await ask_ai_conversational_async(
                             messages=messages,
                             model=model,
-                            base_url=base_url
+                            base_url=base_url,
+                            profile=profile
                         )
                 except KeyboardInterrupt:
                     stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
