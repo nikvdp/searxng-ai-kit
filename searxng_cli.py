@@ -113,12 +113,12 @@ class ProfileManager:
     def _get_default_model(self, provider_type: str) -> str:
         """Get default model for each provider type."""
         defaults = {
-            "openrouter": "openrouter/openai/o3",
+            "openrouter": "openrouter/openai/gpt-5",
             "anthropic": "anthropic/claude-3-5-sonnet-20241022", 
-            "openai": "openai/o3",
+            "openai": "openai/gpt-5",
             "google": "gemini/gemini-2.0-flash-exp",
         }
-        return defaults.get(provider_type, "openai/o3")
+        return defaults.get(provider_type, "openai/gpt-5")
     
     def _get_default_base_url(self, provider_type: str) -> Optional[str]:
         """Get default base URL for each provider type."""
@@ -1170,8 +1170,8 @@ def get_mcp_tools():
                     },
                     "model": {
                         "type": "string", 
-                        "description": "Model to use (default: openai/o3)",
-                        "default": "openai/o3"
+                        "description": "Model to use (default: openai/gpt-5)",
+                        "default": "openai/gpt-5"
                     },
                     "base_url": {
                         "type": "string",
@@ -1186,7 +1186,7 @@ def get_mcp_tools():
 
 async def ask_ai_async(
     prompt: str,
-    model: str = "openai/o3",
+    model: str = "openai/gpt-5",
     base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -1435,7 +1435,7 @@ async def handle_tool_call(name: str, arguments: dict):
         if not prompt:
             return json.dumps({"error": "Prompt is required"})
         
-        model = arguments.get("model", "openai/o3")
+        model = arguments.get("model", "openai/gpt-5")
         base_url = arguments.get("base_url")  # Optional custom base URL
         
         # Use the shared ask_ai_async function instead of duplicating logic
@@ -1958,7 +1958,7 @@ def ask(
     
     # Set default model if still not set
     if not model:
-        model = "openai/o3"
+        model = "openai/gpt-5"
     
     # Handle stdin input for prompt
     if prompt is None or prompt == "-":
@@ -2027,7 +2027,7 @@ def ask(
 
 async def ask_ai_conversational_async(
     messages: List[Dict[str, str]],
-    model: str = "openai/o3",
+    model: str = "openai/gpt-5",
     base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -2253,7 +2253,7 @@ def chat(
     
     # Set default model if still not set
     if not model:
-        model = "openai/o3"
+        model = "openai/gpt-5"
     
     # Check for API keys
     api_keys = {
