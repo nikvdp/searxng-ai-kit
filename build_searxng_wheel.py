@@ -21,31 +21,6 @@ SEARXNG_REPO = "https://github.com/searxng/searxng.git"
 # SEARXNG_COMMIT will be fetched dynamically as latest commit
 SEARXNG_COMMIT = None  # Will be set to latest commit
 
-# SearXNG dependencies that must be pre-installed
-SEARXNG_DEPS = [
-    "babel==2.17.0",
-    "brotli==1.1.0",
-    "certifi==2025.6.15",
-    "fasttext-predict==0.9.2.4",
-    "flask-babel==4.0.0",
-    "flask==3.1.1",
-    "httpx-socks[asyncio]==0.10.0",
-    "httpx[http2]==0.28.1",
-    "isodate==0.7.2",
-    "jinja2==3.1.6",
-    "lxml==5.4.0",
-    "markdown-it-py==3.0.0",
-    "msgspec==0.19.0",
-    "pygments==2.19.1",
-    "python-dateutil==2.9.0.post0",
-    "pyyaml==6.0.2",
-    "redis==5.2.1",
-    "setproctitle==1.3.6",
-    "toml>=0.10.2",
-    "tomli==2.2.1",
-    "uvloop==0.21.0",
-]
-
 
 def run_command(cmd, cwd=None, check=True):
     """Run a command and return the result."""
@@ -127,15 +102,38 @@ def create_build_env():
     return build_env, python_exe, pip_exe
 
 
-def install_dependencies(pip_exe):
+def get_searxng_dependencies(searxng_dir):
+    """Extract dependencies from SearXNG's requirements.txt."""
+    requirements_file = Path(searxng_dir) / "requirements.txt"
+    
+    if not requirements_file.exists():
+        print("ERROR: requirements.txt not found in SearXNG repository")
+        sys.exit(1)
+    
+    deps = []
+    with open(requirements_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            # Skip comments and empty lines
+            if line and not line.startswith("#"):
+                deps.append(line)
+    
+    print(f"Found {len(deps)} dependencies in requirements.txt")
+    return deps
+
+
+def install_dependencies(pip_exe, searxng_dir):
     """Install all SearXNG dependencies."""
     print("Installing SearXNG dependencies...")
 
     # Upgrade pip first
     run_command([pip_exe, "install", "--upgrade", "pip", "setuptools", "wheel"])
 
+    # Get dependencies from SearXNG's requirements.txt
+    deps = get_searxng_dependencies(searxng_dir)
+    
     # Install all dependencies
-    for dep in SEARXNG_DEPS:
+    for dep in deps:
         print(f"Installing {dep}...")
         run_command([pip_exe, "install", dep])
 
@@ -206,11 +204,11 @@ def main():
         # Create build environment
         build_env, python_exe, pip_exe = create_build_env()
 
-        # Install dependencies
-        install_dependencies(pip_exe)
-
-        # Clone SearXNG at latest commit
+        # Clone SearXNG at latest commit first (need it to get dependencies)
         searxng_dir = clone_searxng(build_env, commit_hash)
+        
+        # Install dependencies from SearXNG's requirements.txt
+        install_dependencies(pip_exe, searxng_dir)
 
         # Build wheel
         wheel_file = build_wheel(pip_exe, searxng_dir, output_dir)
