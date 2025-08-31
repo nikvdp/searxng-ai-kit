@@ -78,13 +78,7 @@ def main():
         with open(req_template_file, "r") as f:
             req_template = f.read()
         
-        # Read metadata for hash
-        metadata_file = wheels_dir / "build_metadata.json"
-        with open(metadata_file, "r") as f:
-            metadata = json.load(f)
-        
         req_content = req_template.replace("{SEARXNG_WHEEL_URL}", local_wheel_url)
-        req_content = req_content.replace("{SEARXNG_WHEEL_HASH}", metadata["wheel_hash"])
         
         req_file = script_dir / "requirements.txt"
         with open(req_file, "w") as f:

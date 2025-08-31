@@ -91,7 +91,6 @@ def main():
     # Prepare template variables
     variables = {
         "SEARXNG_WHEEL_URL": github_url,
-        "SEARXNG_WHEEL_HASH": metadata["wheel_hash"],
         "SEARXNG_COMMIT": metadata["searxng_commit"],
         "BUILD_DATE": metadata["build_date"],
         "RELEASE_TAG": release_tag,

@@ -166,6 +166,54 @@ If local setup fails:
 2. Check network connectivity to GitHub
 3. Verify Python and uv are properly installed
 
+### Hash/Caching Issues After Rebuilding Wheels
+
+**Problem**: After running `dev-setup.py`, you might encounter:
+```
+× Failed to read searxng @ file:///.../searxng-wheel.whl
+╰─▶ Hash mismatch for searxng wheel
+```
+
+**Root Cause**: 
+- `uv.lock` contains hash of previous wheel build
+- New wheel has different hash even with same version number
+- uv cache may contain stale wheel data
+
+**Solution**:
+```bash
+# Method 1: Remove lock file (simplest)
+rm uv.lock && uv sync
+
+# Method 2: If cache issues persist
+uv cache clean
+rm uv.lock && uv sync
+```
+
+### uv Tool Installation Issues
+
+**Problem**: After rebuilding wheels, `uv tool install --reinstall .` may use cached old wheel instead of new one.
+
+**Symptoms**:
+- Tool installs successfully but imports fail
+- Getting `ModuleNotFoundError` for modules that should exist
+- Old code behavior despite rebuilding wheel
+
+**Root Cause**: uv aggressively caches wheels even with `--reinstall` flag.
+
+**Solution** (The uv Tool Dance™):
+```bash
+# Complete uninstall/reinstall cycle
+uv tool uninstall searxng-ai-kit
+uv tool install .
+
+# If still having issues, clear cache first
+uv cache clean
+uv tool uninstall searxng-ai-kit  # (if still installed)
+uv tool install .
+```
+
+**Note**: `--reinstall` alone is often insufficient for local wheel development due to caching behavior.
+
 ### CI Pipeline Issues
 
 If CI fails:

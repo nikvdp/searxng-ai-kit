@@ -2095,7 +2095,7 @@ dependencies = [
     { name = "whitenoise" },
 ]
 wheels = [
-    { filename = "searxng-2025.8.29+b8085d27a-py3-none-any.whl", hash = "sha256:c7f71d120706d390633c478f2b6420b5b24e4d4154924a9523ea32d52c7f83eb" },
+    { filename = "searxng-2025.8.29+b8085d27a-py3-none-any.whl", hash = "sha256:f4ba81a3b061c0c8dd72344a20d0ff291417da9001488e09a2fada733f30d99d" },
 ]
 
 [package.metadata]
