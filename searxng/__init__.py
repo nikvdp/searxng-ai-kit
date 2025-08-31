@@ -21,11 +21,11 @@ Advanced Usage:
     ...     max_results=20,
     ...     language="en"
     ... )
-    
+
     >>> # Parallel URL fetching with concurrency control
     >>> urls = ["https://site1.com", "https://site2.com", "https://site3.com"]
     >>> contents = searxng.fetch_urls(urls, max_concurrent=2)
-    
+
     >>> # AI assistant with custom model and endpoint
     >>> response = searxng.ask(
     ...     "Research renewable energy trends",
@@ -55,10 +55,10 @@ __description__ = "Privacy-respecting web search and URL content extraction libr
 # Main public API
 __all__ = [
     "search",
-    "search_async", 
+    "search_async",
     "fetch_url",
     "fetch_url_async",
-    "fetch_urls", 
+    "fetch_urls",
     "fetch_urls_async",
     "ask",
     "ask_async",
