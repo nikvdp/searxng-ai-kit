@@ -396,6 +396,90 @@ class ProfileManager:
 profile_manager = ProfileManager()
 
 
+# --------------------
+# Session persistence
+# --------------------
+class SessionStore:
+    """Lightweight JSON session storage under the user config dir.
+
+    Files live at: ~/.config/searxng/sessions/<session_id>.json (XDG on *nix)
+    """
+
+    def __init__(self, base_config_dir: Optional[Path] = None):
+        self.base_config_dir = base_config_dir or profile_manager.config_dir
+        self.sessions_dir = self.base_config_dir / "sessions"
+
+    def _ensure_dir(self) -> None:
+        try:
+            self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Defer permission errors until actual use sites handle/report
+            pass
+
+    def _path(self, session_id: str) -> Path:
+        self._ensure_dir()
+        return self.sessions_dir / f"{session_id}.json"
+
+    def create(
+        self,
+        model: str,
+        base_url: Optional[str],
+        profile: Optional[str],
+        markdown_path: Optional[str] = None,
+        initial_messages: Optional[List[Dict[str, str]]] = None,
+        title: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        session_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        session = {
+            "session_id": session_id,
+            "created_at": now,
+            "updated_at": now,
+            "model": model,
+            "base_url": base_url,
+            "profile": profile,
+            "title": title or "",
+            "markdown_path": markdown_path,
+            "messages": initial_messages or [],
+        }
+        self.save(session)
+        return session
+
+    def load(self, session_id: str) -> Dict[str, Any]:
+        path = self._path(session_id)
+        if not path.exists():
+            raise FileNotFoundError(f"Session not found: {session_id}")
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def save(self, session: Dict[str, Any]) -> None:
+        session["updated_at"] = datetime.utcnow().isoformat()
+        path = self._path(session["session_id"]) if isinstance(session, dict) else None
+        if not path:
+            raise ValueError("Invalid session object")
+        tmp = path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(session, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            # Best effort; permissions may not be supported on all platforms
+            pass
+
+    def append_message(
+        self, session: Dict[str, Any], role: str, content: str, **extra: Any
+    ) -> Dict[str, Any]:
+        msg: Dict[str, Any] = {"role": role, "content": content, "ts": datetime.utcnow().isoformat()}
+        msg.update({k: v for k, v in extra.items() if v is not None})
+        session.setdefault("messages", []).append(msg)
+        self.save(session)
+        return session
+
+
+session_store = SessionStore()
+
+
 def initialize_ai_config(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
@@ -1276,6 +1360,36 @@ def get_mcp_tools():
             },
         ),
         Tool(
+            name="chat",
+            description="Send a chat message with optional sessionId to continue a thread. Persists and returns the sessionId.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "User message to send",
+                    },
+                    "sessionId": {
+                        "type": "string",
+                        "description": "Existing session ID to continue",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model to use (default: from profile or openai/gpt-5)",
+                    },
+                    "base_url": {
+                        "type": "string",
+                        "description": "Custom API base URL (optional, overrides profile setting)",
+                    },
+                    "profile": {
+                        "type": "string",
+                        "description": "Profile name to use for API keys and config (default: uses default profile)",
+                    },
+                },
+                "required": ["message"],
+            },
+        ),
+        Tool(
             name="multi_web_search",
             description="Search the web with multiple queries in parallel using SearXNG",
             inputSchema={
@@ -1614,6 +1728,76 @@ async def handle_tool_call(name: str, arguments: dict):
         )
 
         return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
+
+    elif name == "chat":
+        # Conversational, resumable chat via session store
+        message = arguments.get("message")
+        if not message:
+            return json.dumps({"error": "message is required"})
+
+        provided_session_id = arguments.get("sessionId")
+        model = arguments.get("model")
+        base_url = arguments.get("base_url")
+        profile = arguments.get("profile")
+
+        try:
+            # Initialize config early to get defaults and env set
+            resolved_model, resolved_base = initialize_ai_config(model, base_url, profile)
+
+            if provided_session_id:
+                session = session_store.load(provided_session_id)
+                session_id = session["session_id"]
+            else:
+                session = session_store.create(
+                    model=resolved_model, base_url=resolved_base, profile=profile, title=""
+                )
+                session_id = session["session_id"]
+
+            # Prepare messages: only keep role/content for LLM
+            hist = [
+                {"role": m.get("role"), "content": m.get("content")}
+                for m in session.get("messages", [])
+                if m.get("role") and m.get("content") is not None
+            ]
+
+            # Append the new user message for this turn
+            hist.append({"role": "user", "content": message})
+
+            # Call conversational async
+            result = await ask_ai_conversational_async(
+                messages=hist, model=resolved_model, base_url=resolved_base, profile=profile
+            )
+
+            if result.get("success"):
+                # Persist updated messages back to the session
+                session["model"] = result.get("model", resolved_model)
+                session["messages"] = result.get("messages", hist)
+                session_store.save(session)
+
+                return json.dumps(
+                    {
+                        "success": True,
+                        "sessionId": session_id,
+                        "model": session["model"],
+                        "response": result.get("response", ""),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            else:
+                return json.dumps(
+                    {
+                        "success": False,
+                        "sessionId": session_id,
+                        "error": result.get("error", "Unknown error"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+        except FileNotFoundError:
+            return json.dumps({"error": f"Session not found: {provided_session_id}"})
+        except Exception as e:
+            return json.dumps({"error": f"Chat error: {str(e)}"})
 
     elif name == "multi_web_search":
         queries = arguments.get("queries")
@@ -2546,22 +2730,57 @@ def chat(
     profile: Optional[str] = typer.Option(
         None, "--profile", "-p", help="Profile to use for API key and configuration"
     ),
+    session: Optional[str] = typer.Option(
+        None,
+        "--session",
+        "-s",
+        help="Existing session ID to resume; creates a new one if omitted",
+    ),
+    new: bool = typer.Option(
+        False,
+        "--new",
+        help="Force a new session even if --session is provided",
+    ),
 ):
-    """Start an interactive chat session with AI assistant that has web search capabilities."""
+    """Start or resume an interactive chat session with history persistence.
+
+    - New session: no --session (or use --new)
+    - Resume: pass --session <id>, history is reloaded
+    """
     import litellm
     import os
     import sys
 
-    # Initialize configuration from profiles (this handles everything!)
-    model, base_url = initialize_ai_config(model, base_url, profile)
+    # Resolve session, model/base_url/profile before starting interactive loop
+    active_session = None
+    selected_profile = profile
+
+    if session and not new:
+        try:
+            active_session = session_store.load(session)
+            # Fill missing CLI args from stored session metadata
+            if model is None:
+                model = active_session.get("model")
+            if base_url is None:
+                base_url = active_session.get("base_url")
+            if selected_profile is None:
+                selected_profile = active_session.get("profile")
+        except FileNotFoundError:
+            console.print(f"[red]Session not found: {session}[/red]")
+            raise typer.Exit(1)
+
+    # Initialize configuration from profiles (sets env vars, defaults)
+    model, base_url = initialize_ai_config(model, base_url, selected_profile)
 
     async def run_interactive_chat():
         import signal
         from datetime import datetime
         from pathlib import Path
 
-        # Initialize conversation history
-        messages = []
+        # Initialize conversation history (load if resuming)
+        messages: List[Dict[str, str]] = []
+        session_obj: Optional[Dict[str, Any]] = None
+        session_id: Optional[str] = None
 
         # Handle stdin input if requested
         first_message = None
@@ -2581,24 +2800,54 @@ def chat(
         chat_dir = Path(data_home) / "searxng-ai-kit" / "chats"
         chat_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate chat session filename with timestamp
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # Compute model display name
         model_name = model.split("/")[-1] if "/" in model else model
-        chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
 
-        # Initialize markdown file
-        with open(chat_file, "w", encoding="utf-8") as f:
-            f.write(f"# SearXNG AI Kit Chat Session\n\n")
-            f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
-            f.write(f"**Model:** {model}  \n")
-            f.write(f"**Session:** {timestamp}  \n\n")
-            f.write("---\n\n")
+        # Establish or resume session JSON + markdown transcript
+        if active_session and not new:
+            session_obj = active_session
+            session_id = session_obj["session_id"]
+            messages = [
+                {"role": m.get("role"), "content": m.get("content")}
+                for m in session_obj.get("messages", [])
+                if m.get("role") and m.get("content") is not None
+            ]
+            # Use existing markdown file if present, else create new
+            mp = session_obj.get("markdown_path")
+            if mp:
+                chat_file = Path(mp)
+            else:
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
+                with open(chat_file, "w", encoding="utf-8") as f:
+                    f.write(f"# SearXNG AI Kit Chat Session\n\n")
+                    f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n")
+                    f.write(f"**Model:** {model}  \\n")
+                    f.write(f"**Session:** {session_id}  \\n\\n")
+                    f.write("---\n\n")
+                session_obj["markdown_path"] = str(chat_file)
+                session_store.save(session_obj)
+        else:
+            # New session: create JSON session and markdown
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
+            with open(chat_file, "w", encoding="utf-8") as f:
+                f.write(f"# SearXNG AI Kit Chat Session\n\n")
+                f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n")
+                f.write(f"**Model:** {model}  \\n")
+                f.write(f"**Session:** (pending)  \\n\\n")
+                f.write("---\n\n")
+            session_obj = session_store.create(
+                model=model, base_url=base_url, profile=selected_profile, markdown_path=str(chat_file)
+            )
+            session_id = session_obj["session_id"]
 
         # Setup console for input/output
         stderr_console = Console(file=sys.stderr, force_terminal=True)
         stderr_console.print(f"[dim]SearXNG AI Kit - Interactive Chat[/dim]")
         stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
         stderr_console.print(f"[dim]Chat history: {chat_file}[/dim]")
+        stderr_console.print(f"[dim]Session ID: [cyan]{session_id}[/cyan][/dim]")
         stderr_console.print(
             f"[dim]Type 'exit', 'quit', or press Ctrl+C to end the conversation[/dim]"
         )
@@ -2673,15 +2922,11 @@ def chat(
 
         enable_bracketed_paste()
 
-        # Process initial message if provided
+        # Process initial message if provided (works for new or resumed)
         if first_message:
             messages.append({"role": "user", "content": first_message})
-
-            # Save initial message to markdown file
             with open(chat_file, "a", encoding="utf-8") as f:
                 f.write(f"## You\n\n{first_message}\n\n")
-
-            # Display the initial message
             stderr_console.print(f"[bold green]You:[/bold green] {first_message}")
             stderr_console.print()
 
@@ -2703,15 +2948,17 @@ def chat(
                         messages=messages,
                         model=model,
                         base_url=base_url,
-                        profile=profile,
+                        profile=selected_profile,
                     )
             except KeyboardInterrupt:
                 stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
                 return
 
             if result["success"]:
-                # Update conversation history with the response
+                # Update conversation history with the response and persist session JSON
                 messages = result["messages"]
+                session_obj["messages"] = messages
+                session_store.save(session_obj)
 
                 # Display the response with model name instead of "Assistant"
                 stderr_console.print(f"[bold blue]{model_name}:[/bold blue] ", end="")
@@ -2752,10 +2999,8 @@ def chat(
                 if not user_input:
                     continue
 
-                # Add user message to history
+                # Add user message to history and append to transcript
                 messages.append({"role": "user", "content": user_input})
-
-                # Save user message to markdown file
                 with open(chat_file, "a", encoding="utf-8") as f:
                     f.write(f"## You\n\n{user_input}\n\n")
 
@@ -2779,15 +3024,17 @@ def chat(
                             messages=messages,
                             model=model,
                             base_url=base_url,
-                            profile=profile,
+                            profile=selected_profile,
                         )
                 except KeyboardInterrupt:
                     stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
                     break
 
                 if result["success"]:
-                    # Update conversation history with the response
+                    # Update conversation history with the response and persist session JSON
                     messages = result["messages"]
+                    session_obj["messages"] = messages
+                    session_store.save(session_obj)
 
                     # Display the response with model name instead of "Assistant"
                     stderr_console.print(
