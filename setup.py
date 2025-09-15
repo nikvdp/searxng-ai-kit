@@ -123,49 +123,86 @@ class BuildSearXNGWheel:
                     shutil.copytree(item, dist_info_dest)
                     print(f"✓ Copied metadata: {item.name}")
 
-        # Also update pyproject.toml dependencies if needed
-        self.ensure_searxng_deps_in_pyproject()
+        # Generate pyproject.toml with dynamic dependencies
+        self.generate_pyproject_with_dynamic_deps(wheel_file)
 
         return True
 
-    def ensure_searxng_deps_in_pyproject(self):
-        """Ensure SearXNG dependencies are in pyproject.toml (informational only)."""
-        script_dir = Path(__file__).parent
-        wheels_dir = script_dir / "wheels"
+    def extract_searxng_dependencies(self, wheel_file):
+        """Extract dependencies from SearXNG wheel METADATA."""
+        import tempfile
+        import zipfile
 
-        # Get SearXNG dependencies for reference
-        existing_wheels = list(wheels_dir.glob("searxng-*.whl"))
-        if existing_wheels:
-            wheel_file = existing_wheels[0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
 
-            # Extract dependency info from wheel metadata
-            import tempfile
-            import zipfile
+            # Extract the wheel
+            with zipfile.ZipFile(wheel_file, 'r') as wheel_zip:
+                wheel_zip.extractall(temp_path)
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
+            # Find METADATA file
+            for metadata_file in temp_path.rglob("METADATA"):
+                with open(metadata_file, 'r') as f:
+                    metadata = f.read()
 
-                with zipfile.ZipFile(wheel_file, 'r') as wheel_zip:
-                    wheel_zip.extractall(temp_path)
-
-                # Find METADATA file
-                for item in temp_path.rglob("METADATA"):
-                    with open(item, 'r') as f:
-                        metadata = f.read()
-
-                    # Extract Requires-Dist lines
-                    requires = []
-                    for line in metadata.split('\n'):
-                        if line.startswith('Requires-Dist:'):
-                            dep = line.replace('Requires-Dist: ', '').strip()
-                            # Skip extra deps like [dev]
-                            if ';' not in dep:
+                # Extract Requires-Dist lines
+                requires = []
+                for line in metadata.split('\n'):
+                    if line.startswith('Requires-Dist:'):
+                        dep = line.replace('Requires-Dist: ', '').strip()
+                        # Skip test/dev dependencies (those with extras)
+                        if '; extra ==' not in dep:
+                            # Handle conditional dependencies like "tomli>=2.2.1; python_version < \"3.11\""
+                            if ';' in dep and 'python_version' in dep:
+                                # Keep conditional dependencies as-is
+                                requires.append(dep)
+                            elif ';' not in dep:
+                                # Keep regular dependencies
                                 requires.append(dep)
 
-                    if requires:
-                        print(f"✓ Found {len(requires)} SearXNG dependencies")
-                        # Note: Dependencies are already in pyproject.toml
-                    break
+                print(f"✓ Extracted {len(requires)} runtime dependencies from wheel METADATA")
+                return requires
+
+        print("Warning: Could not find METADATA in wheel")
+        return []
+
+    def generate_pyproject_with_dynamic_deps(self, wheel_file):
+        """Generate pyproject.toml from template with dynamic SearXNG dependencies."""
+        script_dir = Path(__file__).parent
+        template_file = script_dir / "pyproject.toml.template"
+        output_file = script_dir / "pyproject.toml"
+
+        if not template_file.exists():
+            print("Warning: pyproject.toml.template not found")
+            return
+
+        # Extract SearXNG dependencies
+        searxng_deps = self.extract_searxng_dependencies(wheel_file)
+
+        # Format dependencies for pyproject.toml
+        deps_lines = []
+        for dep in searxng_deps:
+            # Handle quotes in conditional dependencies
+            if '"' in dep:
+                # Use single quotes for the TOML string to avoid escaping issues
+                deps_lines.append(f"    '{dep}',")
+            else:
+                # Use double quotes for normal dependencies
+                deps_lines.append(f'    "{dep}",')
+
+        deps_section = '\n'.join(deps_lines)
+
+        # Read template and replace placeholder
+        with open(template_file, 'r') as f:
+            template_content = f.read()
+
+        final_content = template_content.replace('{{SEARXNG_DEPENDENCIES}}', deps_section)
+
+        # Write final pyproject.toml
+        with open(output_file, 'w') as f:
+            f.write(final_content)
+
+        print(f"✓ Generated pyproject.toml with {len(searxng_deps)} dynamic SearXNG dependencies")
 
 
 class CustomEggInfo(BuildSearXNGWheel, egg_info):
