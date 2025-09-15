@@ -16,32 +16,53 @@ An AI-enhanced command-line interface, Python library, and MCP server for the Se
 
 ### Prerequisites
 - Python 3.11+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (recommended)
 
-### Install from Source
+### Install with uv (Recommended)
 
-1. **Clone the repository:**
+1. **Install uv:**
+   ```bash
+   # On macOS and Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   # On Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+2. **Build and install:**
    ```bash
    git clone https://github.com/nikvdp/searxng-ai-kit
    cd searxng-ai-kit
+
+   # Build wheel and set up development environment
+   python dev-setup.py
+
+   # Install as tool
+   uv tool install .
    ```
 
-2. **Install the package:**
+3. **Verify:**
    ```bash
-   # With uv (recommended)
-   uv sync
-   
-   # Or with pip (fallback)
-   pip install .
-   ```
-
-3. **Verify installation:**
-   ```bash
-   # With uv (if installed via uv sync)
-   uv run searxng --help
-   
-   # Direct command (if installed via pip or in PATH)
    searxng --help
    ```
+
+### Development Setup
+
+```bash
+# Clone and set up for development
+git clone https://github.com/nikvdp/searxng-ai-kit
+cd searxng-ai-kit
+
+# Build SearXNG wheel, generate configs, sync dependencies
+python dev-setup.py
+
+# Test
+uv run searxng search "test" --engines duckduckgo
+```
+
+The build system automatically:
+- Installs Python 3.11+ via uv
+- Builds SearXNG wheel with proper dependency isolation
+- Handles modern type annotations (`str | Exception`)
+- Generates local configuration files
 
 ## Usage Examples
 

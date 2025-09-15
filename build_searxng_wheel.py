@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Build script to generate SearXNG wheel using --no-build-isolation approach.
+Build script to generate SearXNG wheel using uv for Python version management.
 
-This script solves SearXNG's circular import issue by pre-installing all
-dependencies before building the wheel with --no-build-isolation.
+This script uses uv to:
+1. Install Python 3.11+ to handle modern type annotations
+2. Create isolated environments with proper Python version
+3. Build wheels using uv's wheel building capabilities
+4. Solve SearXNG's circular import issues
 """
 
 import os
@@ -22,13 +25,18 @@ SEARXNG_REPO = "https://github.com/searxng/searxng.git"
 SEARXNG_COMMIT = None  # Will be set to latest commit
 
 
-def run_command(cmd, cwd=None, check=True):
+def run_command(cmd, cwd=None, check=True, env=None):
     """Run a command and return the result."""
     print(f"Running: {' '.join(cmd)}")
     if cwd:
         print(f"  in directory: {cwd}")
 
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    # Use environment variables if provided
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=run_env)
 
     if check and result.returncode != 0:
         print(f"Command failed with return code {result.returncode}")
@@ -82,24 +90,53 @@ def save_build_metadata(wheel_file, commit_hash, output_dir):
     return metadata
 
 
+def ensure_uv_available():
+    """Ensure uv is available for build operations."""
+    try:
+        result = run_command(["uv", "--version"], check=False)
+        if result.returncode == 0:
+            print(f"Found uv: {result.stdout.strip()}")
+            return
+    except FileNotFoundError:
+        pass
+
+    print("ERROR: uv is required but not found.")
+    print("Please install uv: https://docs.astral.sh/uv/getting-started/installation/")
+    sys.exit(1)
+
 def create_build_env():
-    """Create a temporary build environment."""
-    print("Creating temporary build environment...")
+    """Create a temporary build environment using uv with Python 3.11+."""
+    print("Creating temporary build environment with uv...")
     build_env = tempfile.mkdtemp(prefix="searxng_build_")
     print(f"Build environment: {build_env}")
 
-    # Create virtual environment
-    run_command([sys.executable, "-m", "venv", "venv"], cwd=build_env)
+    # Ensure uv is available
+    ensure_uv_available()
 
-    # Determine python executable in venv
+    # Install Python 3.11 if not available and create virtual environment
+    print("Creating uv virtual environment with Python 3.11+...")
+    # Use custom directories to avoid permission issues
+    cache_dir = os.path.join(build_env, "uv_cache")
+    data_dir = os.path.join(build_env, "uv_data")
+    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    env = {
+        "UV_CACHE_DIR": cache_dir,
+        "UV_DATA_DIR": data_dir,
+        "UV_PYTHON_INSTALL_DIR": data_dir
+    }
+    run_command(["uv", "venv", "--python", "3.11", "venv"], cwd=build_env, env=env)
+
+    # Determine uv executable path
     if os.name == "nt":
-        python_exe = os.path.join(build_env, "venv", "Scripts", "python.exe")
-        pip_exe = os.path.join(build_env, "venv", "Scripts", "pip.exe")
+        uv_run = ["uv", "run", "--env-file", os.path.join(build_env, "venv", "pyvenv.cfg")]
     else:
-        python_exe = os.path.join(build_env, "venv", "bin", "python")
-        pip_exe = os.path.join(build_env, "venv", "bin", "pip")
+        uv_run = ["uv", "run", "--env-file", os.path.join(build_env, "venv", "pyvenv.cfg")]
 
-    return build_env, python_exe, pip_exe
+    # Set VIRTUAL_ENV for uv commands
+    venv_path = os.path.join(build_env, "venv")
+
+    return build_env, venv_path
 
 
 def get_searxng_dependencies(searxng_dir):
@@ -122,20 +159,34 @@ def get_searxng_dependencies(searxng_dir):
     return deps
 
 
-def install_dependencies(pip_exe, searxng_dir):
-    """Install all SearXNG dependencies."""
-    print("Installing SearXNG dependencies...")
-
-    # Upgrade pip first
-    run_command([pip_exe, "install", "--upgrade", "pip", "setuptools", "wheel"])
+def install_dependencies(venv_path, searxng_dir):
+    """Install all SearXNG dependencies using uv."""
+    print("Installing SearXNG dependencies with uv...")
 
     # Get dependencies from SearXNG's requirements.txt
     deps = get_searxng_dependencies(searxng_dir)
-    
-    # Install all dependencies
-    for dep in deps:
-        print(f"Installing {dep}...")
-        run_command([pip_exe, "install", dep])
+
+    # Create requirements file for uv
+    req_file = os.path.join(os.path.dirname(venv_path), "searxng_requirements.txt")
+    with open(req_file, "w") as f:
+        f.write("\n".join(deps))
+
+    # Install build dependencies first
+    cache_dir = os.path.join(os.path.dirname(venv_path), "uv_cache")
+    data_dir = os.path.join(os.path.dirname(venv_path), "uv_data")
+    env = {
+        "VIRTUAL_ENV": venv_path,
+        "UV_CACHE_DIR": cache_dir,
+        "UV_DATA_DIR": data_dir,
+        "UV_PYTHON_INSTALL_DIR": data_dir
+    }
+
+    print("Installing build dependencies (setuptools, wheel)...")
+    run_command(["uv", "pip", "install", "setuptools", "wheel"], env=env)
+
+    print(f"Installing {len(deps)} SearXNG dependencies...")
+    # Use uv pip install to install dependencies in the virtual environment
+    run_command(["uv", "pip", "install", "-r", req_file], env=env)
 
 
 def clone_searxng(build_env, commit_hash):
@@ -158,23 +209,32 @@ def clone_searxng(build_env, commit_hash):
     return searxng_dir
 
 
-def build_wheel(pip_exe, searxng_dir, output_dir):
-    """Build SearXNG wheel using --no-build-isolation."""
-    print("Building SearXNG wheel...")
+def build_wheel(venv_path, searxng_dir, output_dir):
+    """Build SearXNG wheel using uv with --no-build-isolation."""
+    print("Building SearXNG wheel with uv build...")
 
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
-    # Build wheel with --no-build-isolation
+    # Build wheel using uv build with --no-build-isolation
+    # This bypasses SearXNG's circular import issues
+    cache_dir = os.path.join(os.path.dirname(venv_path), "uv_cache")
+    data_dir = os.path.join(os.path.dirname(venv_path), "uv_data")
+    env = {
+        "VIRTUAL_ENV": venv_path,
+        "UV_CACHE_DIR": cache_dir,
+        "UV_DATA_DIR": data_dir,
+        "UV_PYTHON_INSTALL_DIR": data_dir
+    }
     run_command(
         [
-            pip_exe,
-            "wheel",
+            "uv", "build",
+            "--wheel",
             "--no-build-isolation",
-            "--wheel-dir",
-            str(output_dir),
+            "--out-dir", str(output_dir),
             searxng_dir,
-        ]
+        ],
+        env=env
     )
 
     # Find the generated wheel file
@@ -201,17 +261,17 @@ def main():
         # Fetch latest commit hash
         commit_hash = fetch_latest_commit()
 
-        # Create build environment
-        build_env, python_exe, pip_exe = create_build_env()
+        # Create build environment with uv
+        build_env, venv_path = create_build_env()
 
         # Clone SearXNG at latest commit first (need it to get dependencies)
         searxng_dir = clone_searxng(build_env, commit_hash)
-        
-        # Install dependencies from SearXNG's requirements.txt
-        install_dependencies(pip_exe, searxng_dir)
 
-        # Build wheel
-        wheel_file = build_wheel(pip_exe, searxng_dir, output_dir)
+        # Install dependencies from SearXNG's requirements.txt using uv
+        install_dependencies(venv_path, searxng_dir)
+
+        # Build wheel using uv
+        wheel_file = build_wheel(venv_path, searxng_dir, output_dir)
 
         # Save build metadata
         metadata = save_build_metadata(wheel_file, commit_hash, output_dir)

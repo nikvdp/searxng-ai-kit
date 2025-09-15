@@ -30,6 +30,20 @@ def run_command(cmd, cwd=None):
 
     return result
 
+def ensure_uv_available():
+    """Ensure uv is available."""
+    try:
+        result = subprocess.run(["uv", "--version"], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"Found uv: {result.stdout.strip()}")
+            return
+    except FileNotFoundError:
+        pass
+
+    print("ERROR: uv is required but not found.")
+    print("Please install uv: https://docs.astral.sh/uv/getting-started/installation/")
+    sys.exit(1)
+
 
 def main():
     """Main development setup process."""
@@ -38,11 +52,14 @@ def main():
 
     script_dir = Path(__file__).parent
 
-    print("\n1. Building SearXNG wheel from latest commit...")
+    print("\n1. Ensuring uv is available...")
+    ensure_uv_available()
+
+    print("\n2. Building SearXNG wheel with uv...")
     result = run_command([sys.executable, "build_searxng_wheel.py"], cwd=script_dir)
     print("SearXNG wheel built successfully!")
 
-    print("\n2. Generating local configuration files...")
+    print("\n3. Generating local configuration files...")
     # For local development, use a file:// URL to the local wheel
     wheels_dir = script_dir / "wheels"
     wheel_files = list(wheels_dir.glob("searxng-*.whl"))
@@ -86,15 +103,29 @@ def main():
 
     print(f"Generated config files with local wheel: {local_wheel_url}")
 
-    print("\n3. Development setup complete!")
+    print("\n3. Syncing dependencies with uv...")
+    ensure_uv_available()
+    # Use a custom cache directory to avoid permission issues
+    cache_dir = script_dir / "uv_cache"
+    cache_dir.mkdir(exist_ok=True)
+    env = os.environ.copy()
+    env["UV_CACHE_DIR"] = str(cache_dir)
+    result = subprocess.run(["uv", "sync"], cwd=script_dir, env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"UV sync failed with return code {result.returncode}")
+        print("STDOUT:", result.stdout)
+        print("STDERR:", result.stderr)
+        print("\\nNote: You may need to run 'uv sync' manually if there are cache permission issues")
+    else:
+        print("Dependencies synced successfully!")
+
+    print("\n4. Development setup complete!")
     print("\nNext steps:")
-    print("  1. Install in development mode: uv pip install -e .")
-    print("  2. Test functionality: uv run searxng search 'test' --engines duckduckgo")
-    print(
-        "  3. Run tests: uv run python -c 'import searxng; print(\"Import successful\")'"
-    )
+    print("  1. Test functionality: uv run searxng search 'test' --engines duckduckgo")
+    print("  2. Install as tool: uv tool install .")
+    print("  3. Run basic import test: uv run python -c 'import searxng; print(\"Import successful\")'")
     print("\nNote: This uses a local file:// URL for development.")
-    print("CI will generate proper GitHub release URLs for production builds.")
+    print("Dependencies are managed automatically by uv.")
 
 
 if __name__ == "__main__":
