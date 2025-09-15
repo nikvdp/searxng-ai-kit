@@ -41,14 +41,17 @@ dependencies = [
 searxng = "searxng_cli:main"
 
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=45", "wheel", "uv>=0.1.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["searxng*"]
+include = ["searxng*", "searx*"]
 
 [tool.setuptools]
 py-modules = ["searxng_cli"]
+
+[tool.setuptools.package-data]
+searx = ["**/*"]
 
 [tool.uv]
 dev-dependencies = [

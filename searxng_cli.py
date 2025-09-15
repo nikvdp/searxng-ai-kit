@@ -38,6 +38,7 @@ def configure_logging():
 # Configure logging early
 configure_logging()
 
+# Import vendored SearXNG modules
 import searx
 import searx.engines
 import searx.preferences
