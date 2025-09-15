@@ -1611,7 +1611,7 @@ def get_mcp_tools():
         ),
         Tool(
             name="chat",
-            description="Send a chat message with optional sessionId to continue a thread. Persists and returns the sessionId.",
+            description="Send a chat message with optional sessionId to continue a conversation thread. IMPORTANT: This tool returns a sessionId in the response - you should store and reuse this sessionId for subsequent messages in the same conversation to maintain context and conversation history. When starting a new conversation, omit sessionId. When continuing an existing conversation, always pass the sessionId from the previous response.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1621,7 +1621,7 @@ def get_mcp_tools():
                     },
                     "sessionId": {
                         "type": "string",
-                        "description": "Existing session ID to continue",
+                        "description": "Existing session ID to continue the same conversation (obtained from previous chat responses). Omit for new conversations, include for continuing existing conversations.",
                     },
                     "model": {
                         "type": "string",
