@@ -438,24 +438,45 @@ searxng cli-proxy-api enable
 searxng cli-proxy-api status
 ```
 
-#### Step 5: Use It!
+#### Step 5: Set a Default Model (Optional)
 
 ```bash
-# Use Claude via CLI Proxy API
+# Set a default model so you don't need --model every time
+searxng cli-proxy-api set-default-model claude-sonnet-4-5-20250929
+
+# Now just use ask/chat without --model
+searxng ask "Explain quantum computing"
+searxng chat
+```
+
+#### Step 6: Use It!
+
+```bash
+# List all available models
+searxng models
+
+# Use CLI Proxy API models (with explicit model)
 searxng ask --model cli-proxy-api/claude-sonnet-4-5-20250929 "Explain quantum computing"
 
-# Use Gemini via CLI Proxy API
-searxng ask --model cli-proxy-api/gemini-2.5-pro "What's new in AI?"
+# Or just use the default (if set)
+searxng ask "What's new in AI?"
 
 # Start interactive chat
-searxng chat --model cli-proxy-api/claude-sonnet-4-5-20250929
+searxng chat
 ```
 
 #### Available Commands
 
 ```bash
-# Check status and available models
+# List all available models (shows default)
+searxng models
+
+# Check status
 searxng cli-proxy-api status
+
+# Set/clear default model
+searxng cli-proxy-api set-default-model claude-sonnet-4-5-20250929
+searxng cli-proxy-api clear-default-model
 
 # Enable/disable integration
 searxng cli-proxy-api enable
