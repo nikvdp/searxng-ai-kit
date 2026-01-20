@@ -511,6 +511,55 @@ class ProfileManager:
 profile_manager = ProfileManager()
 
 
+class GlobalConfig:
+    """Global configuration for SearXNG CLI."""
+
+    def __init__(self):
+        self.config_dir = profile_manager.config_dir  # Reuse same config dir
+        self.config_file = self.config_dir / "config.toml"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self._config_data = self._load_config()
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from TOML file."""
+        if not self.config_file.exists():
+            return {}
+
+        try:
+            with open(self.config_file, "rb") as f:
+                return tomllib.load(f)
+        except Exception:
+            return {}
+
+    def _save_config(self, data: Dict[str, Any]):
+        """Save configuration to TOML file."""
+        try:
+            import tomli_w
+
+            with open(self.config_file, "wb") as f:
+                tomli_w.dump(data, f)
+            self._config_data = data
+        except Exception:
+            pass
+
+    def get_default_model(self) -> Optional[str]:
+        """Get the global default model."""
+        return self._config_data.get("default_model")
+
+    def set_default_model(self, model: Optional[str]):
+        """Set the global default model."""
+        data = self._config_data.copy()
+        if model:
+            data["default_model"] = model
+        else:
+            data.pop("default_model", None)
+        self._save_config(data)
+
+
+# Global config instance
+global_config = GlobalConfig()
+
+
 # --------------------
 # CLI Proxy API Config
 # --------------------
@@ -541,217 +590,13 @@ class CLIProxyAPIConfig:
         import toml
 
         try:
-            with open(self.config_file, "w") as f:
+            import toml
+
+            with open(self.config_file, "w", encoding="utf-8") as f:
                 toml.dump(data, f)
-            os.chmod(self.config_file, 0o600)
-        except Exception as e:
-            console.print(f"[red]Error saving config: {e}[/red]")
-            raise typer.Exit(1)
-
-    def _get_section(self) -> Dict[str, Any]:
-        """Get the cli-proxy-api section from config."""
-        data = self._load_config()
-        return data.get("cli-proxy-api", {})
-
-    def _set_section(self, section: Dict[str, Any]):
-        """Set the cli-proxy-api section in config."""
-        data = self._load_config()
-        data["cli-proxy-api"] = section
-        self._save_config(data)
-
-    def is_enabled(self) -> bool:
-        """Check if CLI Proxy API integration is enabled."""
-        section = self._get_section()
-        return section.get("enabled", False)
-
-    def set_enabled(self, enabled: bool):
-        """Enable or disable CLI Proxy API integration."""
-        section = self._get_section()
-        section["enabled"] = enabled
-        self._set_section(section)
-
-    def get_config_path(self) -> Optional[str]:
-        """Get explicit config path if set."""
-        section = self._get_section()
-        path = section.get("config-path", "")
-        return path if path else None
-
-    def set_config_path(self, path: Optional[str]):
-        """Set explicit config path."""
-        section = self._get_section()
-        section["config-path"] = path or ""
-        self._set_section(section)
-
-    def find_cli_proxy_config(self) -> Optional[Path]:
-        """Auto-detect cli-proxy-api config file location.
-
-        Checks in order:
-        1. Explicit path from config
-        2. ~/.cli-proxy-api/config.yaml
-        3. ~/.config/cli-proxy-api/config.yaml (XDG)
-        """
-        # 1. Check explicit path from config
-        explicit = self.get_config_path()
-        if explicit:
-            explicit_path = Path(explicit).expanduser()
-            if explicit_path.exists():
-                return explicit_path
-
-        # 2. Check ~/.cli-proxy-api/config.yaml
-        home_config = Path.home() / ".cli-proxy-api" / "config.yaml"
-        if home_config.exists():
-            return home_config
-
-        # 3. Check XDG config location
-        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "")
-        if xdg_config_home:
-            xdg_path = Path(xdg_config_home) / "cli-proxy-api" / "config.yaml"
-        else:
-            xdg_path = Path.home() / ".config" / "cli-proxy-api" / "config.yaml"
-        if xdg_path.exists():
-            return xdg_path
-
-        return None
-
-    def is_cli_proxy_available(self) -> bool:
-        """Check if cli-proxy-api binary is available on PATH."""
-        import shutil
-
-        return shutil.which("cli-proxy-api") is not None
-
-    def get_default_model(self) -> Optional[str]:
-        """Get the default model for cli-proxy-api."""
-        section = self._get_section()
-        model = section.get("default-model", "")
-        return model if model else None
-
-    def set_default_model(self, model: Optional[str]):
-        """Set the default model for cli-proxy-api."""
-        section = self._get_section()
-        section["default-model"] = model or ""
-        self._set_section(section)
-
-    def get_status(self) -> Dict[str, Any]:
-        """Get comprehensive status of CLI Proxy API integration."""
-        config_path = self.find_cli_proxy_config()
-        return {
-            "enabled": self.is_enabled(),
-            "binary_available": self.is_cli_proxy_available(),
-            "config_found": config_path is not None,
-            "config_path": str(config_path) if config_path else None,
-            "explicit_config_path": self.get_config_path(),
-            "default_model": self.get_default_model(),
-        }
-
-
-# Global CLI Proxy API config instance
-cli_proxy_config = CLIProxyAPIConfig()
-
-
-# --------------------
-# CLI Proxy API Process Manager
-# --------------------
-
-# Logger for CLI Proxy API operations
-cli_proxy_log = logging.getLogger("searxng.cli_proxy")
-
-
-class CLIProxyAPIManager:
-    """Manages cli-proxy-api subprocess lifecycle.
-
-    This class handles starting, monitoring, and stopping the cli-proxy-api
-    subprocess. It uses a singleton pattern to ensure only one instance
-    manages the proxy process.
-    """
-
-    _instance: Optional["CLIProxyAPIManager"] = None
-
-    def __init__(self):
-        self.process: Optional[subprocess.Popen] = None
-        self.port: Optional[int] = None
-        self.temp_config_path: Optional[Path] = None
-        self._started = False
-        self._restart_count = 0
-        self._max_restarts = 3
-        self._lock_file: Optional[int] = None
-        self._original_sigint_handler = None
-        self._original_sigterm_handler = None
-
-    @classmethod
-    def get_instance(cls) -> "CLIProxyAPIManager":
-        """Singleton pattern for global process management."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def _setup_signal_handlers(self):
-        """Set up signal handlers for clean shutdown."""
-        import signal
-        import atexit
-
-        # Register cleanup on exit
-        atexit.register(self.stop)
-
-        # Save original handlers
-        self._original_sigint_handler = signal.getsignal(signal.SIGINT)
-        self._original_sigterm_handler = signal.getsignal(signal.SIGTERM)
-
-        # Set up our handlers
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-    def _restore_signal_handlers(self):
-        """Restore original signal handlers."""
-        import signal
-
-        if self._original_sigint_handler is not None:
-            signal.signal(signal.SIGINT, self._original_sigint_handler)
-        if self._original_sigterm_handler is not None:
-            signal.signal(signal.SIGTERM, self._original_sigterm_handler)
-
-    def _signal_handler(self, signum, frame):
-        """Handle SIGTERM/SIGINT for clean shutdown."""
-        self.stop()
-        # Restore and re-raise to allow normal signal handling
-        self._restore_signal_handlers()
-        import signal
-
-        if signum == signal.SIGINT:
-            raise KeyboardInterrupt
-        elif signum == signal.SIGTERM:
-            raise SystemExit(128 + signum)
-
-    def _acquire_lock(self) -> bool:
-        """Acquire file lock to prevent concurrent proxy starts."""
-        import fcntl
-
-        lock_dir = (
-            Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
-            / "searxng"
-        )
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = lock_dir / "cli-proxy-api.lock"
-
-        try:
-            self._lock_file = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
-            fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except (OSError, BlockingIOError):
-            if self._lock_file is not None:
-                os.close(self._lock_file)
-                self._lock_file = None
-            return False
-
-    def _release_lock(self):
-        """Release file lock."""
-        import fcntl
-
-        if self._lock_file is not None:
-            try:
-                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
-                os.close(self._lock_file)
-            except Exception:
-                pass
+            self._config_data = data
+        except Exception:
+            pass
             self._lock_file = None
 
     def _find_free_port(self) -> int:
@@ -1064,6 +909,10 @@ class CLIProxyAPIManager:
             List of model IDs prefixed with 'cli-proxy-api/'.
         """
         return [f"cli-proxy-api/{m}" for m in self.get_models(force_refresh)]
+
+
+# CLI Proxy API config instance
+cli_proxy_config = CLIProxyAPIConfig()
 
 
 # --------------------
@@ -1387,7 +1236,17 @@ def initialize_ai_config(
     if model and model.startswith("cli-proxy-api/"):
         return _initialize_cli_proxy_config(model)
 
-    # If no model specified, check for cli-proxy-api default model
+    # If no model specified, check for global default model first
+    if not model:
+        global_default = global_config.get_default_model()
+        if global_default:
+            model = global_default
+
+    # Re-check cli-proxy-api model after global default
+    if model and model.startswith("cli-proxy-api/"):
+        return _initialize_cli_proxy_config(model)
+
+    # If still no model specified, check for cli-proxy-api default model
     if not model and cli_proxy_config.is_enabled():
         default_model = cli_proxy_config.get_default_model()
         if default_model:
@@ -4270,6 +4129,47 @@ def edit(name: str = typer.Argument(..., help="Profile name")):
 def test(name: str = typer.Argument(..., help="Profile name")):
     """Test a profile by making an API call."""
     profile_manager.test_profile(name)
+
+
+# Global default model commands
+@app.command()
+def set_default_model(
+    model: str = typer.Argument(
+        ..., help="Model to set as default (format: provider/model)"
+    ),
+):
+    """Set the global default model for all AI operations.
+
+    Examples:
+        searxng set-default-model openai/gpt-4
+        searxng set-default-model anthropic/claude-3-sonnet
+        searxng set-default-model cli-proxy-api/model-name
+        searxng set-default-model openrouter/openai/gpt-4
+    """
+    global_config.set_default_model(model)
+    console.print(f"[green]✓[/green] Global default model set to: {model}")
+    console.print(
+        f"[dim]This will be used for 'searxng ask' and 'searxng chat' when no --model is specified.[/dim]"
+    )
+
+
+@app.command()
+def clear_default_model():
+    """Clear the global default model setting."""
+    global_config.set_default_model(None)
+    console.print("[green]✓[/green] Global default model cleared")
+    console.print("[dim]Will use profile defaults or hardcoded fallbacks.[/dim]")
+
+
+@app.command()
+def default_model():
+    """Show the current global default model."""
+    model = global_config.get_default_model()
+    if model:
+        console.print(f"Global default model: {model}")
+    else:
+        console.print("No global default model set")
+        console.print("[dim]Use 'searxng set-default-model <model>' to set one[/dim]")
 
 
 # Add profile command group to main app
