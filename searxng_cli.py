@@ -636,6 +636,334 @@ cli_proxy_config = CLIProxyAPIConfig()
 
 
 # --------------------
+# CLI Proxy API Process Manager
+# --------------------
+class CLIProxyAPIManager:
+    """Manages cli-proxy-api subprocess lifecycle.
+
+    This class handles starting, monitoring, and stopping the cli-proxy-api
+    subprocess. It uses a singleton pattern to ensure only one instance
+    manages the proxy process.
+    """
+
+    _instance: Optional["CLIProxyAPIManager"] = None
+
+    def __init__(self):
+        self.process: Optional[subprocess.Popen] = None
+        self.port: Optional[int] = None
+        self.temp_config_path: Optional[Path] = None
+        self._started = False
+        self._restart_count = 0
+        self._max_restarts = 3
+        self._lock_file: Optional[int] = None
+        self._original_sigint_handler = None
+        self._original_sigterm_handler = None
+
+    @classmethod
+    def get_instance(cls) -> "CLIProxyAPIManager":
+        """Singleton pattern for global process management."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for clean shutdown."""
+        import signal
+        import atexit
+
+        # Register cleanup on exit
+        atexit.register(self.stop)
+
+        # Save original handlers
+        self._original_sigint_handler = signal.getsignal(signal.SIGINT)
+        self._original_sigterm_handler = signal.getsignal(signal.SIGTERM)
+
+        # Set up our handlers
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+    def _restore_signal_handlers(self):
+        """Restore original signal handlers."""
+        import signal
+
+        if self._original_sigint_handler is not None:
+            signal.signal(signal.SIGINT, self._original_sigint_handler)
+        if self._original_sigterm_handler is not None:
+            signal.signal(signal.SIGTERM, self._original_sigterm_handler)
+
+    def _signal_handler(self, signum, frame):
+        """Handle SIGTERM/SIGINT for clean shutdown."""
+        self.stop()
+        # Restore and re-raise to allow normal signal handling
+        self._restore_signal_handlers()
+        import signal
+
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        elif signum == signal.SIGTERM:
+            raise SystemExit(128 + signum)
+
+    def _acquire_lock(self) -> bool:
+        """Acquire file lock to prevent concurrent proxy starts."""
+        import fcntl
+
+        lock_dir = (
+            Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+            / "searxng"
+        )
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "cli-proxy-api.lock"
+
+        try:
+            self._lock_file = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+            fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except (OSError, BlockingIOError):
+            if self._lock_file is not None:
+                os.close(self._lock_file)
+                self._lock_file = None
+            return False
+
+    def _release_lock(self):
+        """Release file lock."""
+        import fcntl
+
+        if self._lock_file is not None:
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
+                os.close(self._lock_file)
+            except Exception:
+                pass
+            self._lock_file = None
+
+    def _find_free_port(self) -> int:
+        """Find an available port using OS ephemeral port allocation."""
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            port = s.getsockname()[1]
+        return port
+
+    def _resolve_path(self, path: str, base_dir: Path) -> str:
+        """Resolve relative paths against base directory."""
+        if not path:
+            return path
+        p = Path(path)
+        if p.is_absolute():
+            return str(p)
+        # Handle ~ expansion
+        if path.startswith("~"):
+            return str(Path(path).expanduser())
+        # Resolve relative to base_dir
+        return str((base_dir / p).resolve())
+
+    def _create_temp_config(self, source_config: Path, port: int) -> Path:
+        """Create temporary config with modified port and security settings."""
+        import yaml
+
+        with open(source_config, "r") as f:
+            config = yaml.safe_load(f)
+
+        base_dir = source_config.parent
+
+        # Modify port and FORCE localhost binding for security
+        config["port"] = port
+        config["host"] = "127.0.0.1"  # Always force localhost
+
+        # Resolve relative paths to absolute
+        if "auth-dir" in config:
+            config["auth-dir"] = self._resolve_path(config["auth-dir"], base_dir)
+
+        # Create temp file with secure permissions
+        temp_dir = (
+            Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+            / "searxng"
+            / "cli-proxy"
+        )
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_config = temp_dir / f"config-{port}.yaml"
+
+        # Write with restrictive permissions (0600)
+        fd = os.open(str(temp_config), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(config, f)
+
+        return temp_config
+
+    def start(self, source_config: Optional[Path] = None) -> bool:
+        """Start cli-proxy-api subprocess.
+
+        Args:
+            source_config: Path to cli-proxy-api config. If None, auto-detects.
+
+        Returns:
+            True if started successfully, False otherwise.
+        """
+        import time
+
+        if self._started and self.is_running():
+            return True
+
+        # Auto-detect config if not provided
+        if source_config is None:
+            source_config = cli_proxy_config.find_cli_proxy_config()
+            if source_config is None:
+                return False
+
+        # Acquire lock to prevent concurrent starts
+        if not self._acquire_lock():
+            # Another instance may be starting, wait and check
+            time.sleep(1)
+            return False
+
+        try:
+            # Find free port using ephemeral allocation
+            self.port = self._find_free_port()
+
+            # Create temp config with our port
+            self.temp_config_path = self._create_temp_config(source_config, self.port)
+
+            # Set up signal handlers before starting process
+            self._setup_signal_handlers()
+
+            # Start subprocess
+            # Set NO_PROXY to ensure localhost calls don't go through HTTP proxy
+            env = os.environ.copy()
+            no_proxy = env.get("NO_PROXY", "")
+            if no_proxy:
+                env["NO_PROXY"] = f"{no_proxy},127.0.0.1,localhost"
+            else:
+                env["NO_PROXY"] = "127.0.0.1,localhost"
+
+            self.process = subprocess.Popen(
+                ["cli-proxy-api", "-config", str(self.temp_config_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+        except FileNotFoundError:
+            self._release_lock()
+            return False
+        except Exception:
+            self._release_lock()
+            raise
+
+        # Wait for server to be ready
+        if not self._wait_for_ready(timeout=15):
+            self.stop()
+            return False
+
+        self._started = True
+        self._restart_count = 0
+        return True
+
+    def _wait_for_ready(self, timeout: int = 15) -> bool:
+        """Wait for cli-proxy-api to be ready with exponential backoff."""
+        import time
+
+        start = time.time()
+        url = f"http://127.0.0.1:{self.port}"
+        delay = 0.1
+
+        while time.time() - start < timeout:
+            # Check if process died
+            if self.process and self.process.poll() is not None:
+                return False  # Process exited
+
+            try:
+                # Try the root endpoint first (doesn't require auth)
+                resp = httpx.get(url, timeout=2)
+                if resp.status_code == 200:
+                    return True
+            except httpx.ConnectError:
+                pass  # Not ready yet
+            except Exception:
+                pass
+
+            time.sleep(delay)
+            delay = min(delay * 1.5, 2.0)  # Exponential backoff, max 2s
+
+        return False
+
+    def is_running(self) -> bool:
+        """Check if subprocess is still running."""
+        if self.process is None:
+            return False
+        return self.process.poll() is None
+
+    def get_base_url(self) -> Optional[str]:
+        """Get base URL for API requests (WITHOUT /v1 - litellm adds it)."""
+        if not self._started or self.port is None:
+            return None
+        return f"http://127.0.0.1:{self.port}"
+
+    def stop(self):
+        """Stop subprocess and cleanup."""
+        if self.process is not None:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                try:
+                    self.process.wait(timeout=2)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self.process = None
+
+        # Cleanup temp config
+        if self.temp_config_path and self.temp_config_path.exists():
+            try:
+                self.temp_config_path.unlink()
+            except Exception:
+                pass
+            self.temp_config_path = None
+
+        self._release_lock()
+        self._started = False
+        self.port = None
+
+    def restart(self, source_config: Optional[Path] = None) -> bool:
+        """Restart the subprocess with backoff protection.
+
+        Args:
+            source_config: Path to cli-proxy-api config. If None, auto-detects.
+
+        Returns:
+            True if restarted successfully, False otherwise.
+        """
+        import time
+
+        if self._restart_count >= self._max_restarts:
+            return False
+
+        self._restart_count += 1
+        # Exponential backoff between restarts
+        time.sleep(min(2**self._restart_count, 30))
+
+        self.stop()
+        return self.start(source_config)
+
+    def ensure_running(self, source_config: Optional[Path] = None) -> bool:
+        """Ensure proxy is running, starting if necessary.
+
+        Args:
+            source_config: Path to cli-proxy-api config. If None, auto-detects.
+
+        Returns:
+            True if running, False if failed to start.
+        """
+        if self.is_running():
+            return True
+        return self.start(source_config)
+
+
+# --------------------
 # Session persistence
 # --------------------
 class SessionStore:
@@ -3764,6 +4092,57 @@ def clear_config():
         console.print(f"[dim]Auto-detected config: {found}[/dim]")
     else:
         console.print("[dim]No config file found in standard locations.[/dim]")
+
+
+@cli_proxy_app.command(name="start")
+def start_proxy():
+    """Start cli-proxy-api subprocess (for testing)."""
+    # Check prerequisites
+    if not cli_proxy_config.is_cli_proxy_available():
+        console.print("[red]Error: cli-proxy-api binary not found on PATH[/red]")
+        raise typer.Exit(1)
+
+    config_path = cli_proxy_config.find_cli_proxy_config()
+    if not config_path:
+        console.print("[red]Error: No cli-proxy-api config file found[/red]")
+        console.print(
+            "[dim]Set one with: searxng cli-proxy-api set-config /path/to/config.yaml[/dim]"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"[blue]Starting cli-proxy-api with config: {config_path}[/blue]")
+
+    manager = CLIProxyAPIManager.get_instance()
+    if manager.start(config_path):
+        console.print(f"[green]Started successfully on port {manager.port}[/green]")
+        console.print(f"[dim]Base URL: {manager.get_base_url()}[/dim]")
+        console.print("[dim]Press Ctrl-C to stop[/dim]")
+
+        # Keep running until interrupted
+        import time
+
+        try:
+            while manager.is_running():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            manager.stop()
+            console.print("[yellow]Stopped.[/yellow]")
+    else:
+        console.print("[red]Failed to start cli-proxy-api[/red]")
+        raise typer.Exit(1)
+
+
+@cli_proxy_app.command(name="stop")
+def stop_proxy():
+    """Stop cli-proxy-api subprocess if running."""
+    manager = CLIProxyAPIManager.get_instance()
+    if manager.is_running():
+        manager.stop()
+        console.print("[green]Stopped cli-proxy-api[/green]")
+    else:
+        console.print("[yellow]cli-proxy-api is not running[/yellow]")
 
 
 # Add cli-proxy-api command group to main app
