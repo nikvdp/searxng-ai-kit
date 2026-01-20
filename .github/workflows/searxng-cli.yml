@@ -80,30 +80,12 @@ jobs:
         fi
       shell: bash
 
-    - name: Install dependencies
-      run: |
-        uv sync
-        uv add pyinstaller
-
-    - name: Clean previous builds
-      run: |
-        rm -rf build/ dist/ *.spec.bak || true
-        echo "Cleaned previous build artifacts"
-
-    - name: Build with PyInstaller
-      run: |
-        uv run pyinstaller searxng.spec
+    - name: Build with Makefile
+      run: make ci-build
+      shell: bash
       env:
         PYTHONPATH: .
-
-    - name: Verify build
-      run: |
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          ./dist/searxng.exe --help || echo "Build verification failed but continuing..."
-        else
-          ./dist/searxng --help || echo "Build verification failed but continuing..."
-        fi
-      shell: bash
+        GITHUB_ACTIONS: "true"
 
     - name: Prepare release artifact
       run: |
