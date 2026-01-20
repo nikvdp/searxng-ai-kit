@@ -34,8 +34,8 @@ help:
 	@echo ""
 	@echo "Running:"
 	@echo "  make run          - Run searxng --help"
-	@echo "  make search Q=    - Run search (e.g., make search Q='python tutorial')"
-	@echo "  make ask Q=       - Ask AI (e.g., make ask Q='explain quantum')"
+	@echo "  make search QUERY='text'  - Run search (e.g., make search QUERY='python tutorial')"
+	@echo "  make ask QUERY='text'     - Ask AI (e.g., make ask QUERY='explain quantum')"
 	@echo "  make chat         - Start interactive chat"
 	@echo "  make models       - List available models"
 	@echo "  make mcp-server   - Start MCP server"
@@ -118,18 +118,18 @@ run:
 	$(UV) run searxng --help
 
 search:
-ifndef Q
-	@echo "Usage: make search Q='your query'"
+ifndef QUERY
+	@echo "Usage: make search QUERY='your query'"
 	@exit 1
 endif
-	$(UV) run searxng search "$(Q)" --engines duckduckgo
+	$(UV) run searxng search "$(QUERY)" --engines duckduckgo
 
 ask:
-ifndef Q
-	@echo "Usage: make ask Q='your question'"
+ifndef QUERY
+	@echo "Usage: make ask QUERY='your question'"
 	@exit 1
 endif
-	$(UV) run searxng ask "$(Q)"
+	$(UV) run searxng ask "$(QUERY)"
 
 chat:
 	$(UV) run searxng chat
