@@ -638,6 +638,11 @@ cli_proxy_config = CLIProxyAPIConfig()
 # --------------------
 # CLI Proxy API Process Manager
 # --------------------
+
+# Logger for CLI Proxy API operations
+cli_proxy_log = logging.getLogger("searxng.cli_proxy")
+
+
 class CLIProxyAPIManager:
     """Manages cli-proxy-api subprocess lifecycle.
 
@@ -821,9 +826,11 @@ class CLIProxyAPIManager:
         try:
             # Find free port using ephemeral allocation
             self.port = self._find_free_port()
+            cli_proxy_log.debug(f"Starting cli-proxy-api on port {self.port}")
 
             # Create temp config with our port
             self.temp_config_path = self._create_temp_config(source_config, self.port)
+            cli_proxy_log.debug(f"Created temp config at {self.temp_config_path}")
 
             # Set up signal handlers before starting process
             self._setup_signal_handlers()
@@ -845,19 +852,25 @@ class CLIProxyAPIManager:
                 env=env,
             )
         except FileNotFoundError:
+            cli_proxy_log.error("cli-proxy-api binary not found on PATH")
             self._release_lock()
             return False
-        except Exception:
+        except Exception as e:
+            cli_proxy_log.error(f"Failed to start cli-proxy-api: {e}")
             self._release_lock()
             raise
 
         # Wait for server to be ready
         if not self._wait_for_ready(timeout=15):
+            cli_proxy_log.error(
+                f"cli-proxy-api failed to start (timeout waiting for server on port {self.port})"
+            )
             self.stop()
             return False
 
         self._started = True
         self._restart_count = 0
+        cli_proxy_log.info(f"cli-proxy-api started successfully on port {self.port}")
         return True
 
     def _wait_for_ready(self, timeout: int = 15) -> bool:
@@ -940,11 +953,19 @@ class CLIProxyAPIManager:
         import time
 
         if self._restart_count >= self._max_restarts:
+            cli_proxy_log.error(
+                f"cli-proxy-api max restarts ({self._max_restarts}) exceeded"
+            )
             return False
 
         self._restart_count += 1
+        cli_proxy_log.warning(
+            f"cli-proxy-api process died, attempting restart {self._restart_count}/{self._max_restarts}"
+        )
         # Exponential backoff between restarts
-        time.sleep(min(2**self._restart_count, 30))
+        backoff = min(2**self._restart_count, 30)
+        cli_proxy_log.debug(f"Waiting {backoff}s before restart")
+        time.sleep(backoff)
 
         self.stop()
         return self.start(source_config)
@@ -4244,6 +4265,22 @@ def status():
             f"  [dim]Explicit path set: {status_info['explicit_config_path']}[/dim]"
         )
 
+    # Process status (only if binary and config available)
+    if status_info["binary_available"] and status_info["config_found"]:
+        manager = CLIProxyAPIManager.get_instance()
+        if manager.is_running():
+            console.print(f"[green]✓[/green] Process running on port {manager.port}")
+            # Try to get model count
+            models = manager.get_models()
+            if models:
+                console.print(f"[green]✓[/green] {len(models)} models available")
+            else:
+                console.print(
+                    "[yellow]○[/yellow] No models returned (check auth/OAuth)"
+                )
+        else:
+            console.print("[dim]○[/dim] Process not started (starts on first use)")
+
     # Overall readiness
     console.print()
     if status_info["binary_available"] and status_info["config_found"]:
@@ -4251,7 +4288,7 @@ def status():
             console.print("[green]Ready to use CLI Proxy API for AI requests[/green]")
         else:
             console.print(
-                "[yellow]CLI Proxy API available but disabled. Run 'searxng cli-proxy enable' to enable.[/yellow]"
+                "[yellow]CLI Proxy API available but disabled. Run 'searxng cli-proxy-api enable' to enable.[/yellow]"
             )
     else:
         missing = []
