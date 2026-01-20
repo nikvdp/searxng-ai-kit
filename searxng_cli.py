@@ -883,6 +883,7 @@ class CLIProxyAPIManager:
 
         self._started = True
         self._restart_count = 0
+        self._start_time = time.time()  # Track when proxy started for retry logic
         cli_proxy_log.info(f"cli-proxy-api started successfully on port {self.port}")
         return True
 
@@ -1018,23 +1019,38 @@ class CLIProxyAPIManager:
 
         try:
             url = f"http://127.0.0.1:{self.port}/v1/models"
-            resp = httpx.get(url, timeout=5)
-            if resp.status_code != 200:
-                return []
 
-            data = resp.json()
-            # OpenAI format: {"data": [{"id": "model-name", ...}, ...]}
-            models = []
-            for model in data.get("data", []):
-                model_id = model.get("id")
-                if model_id:
-                    models.append(model_id)
+            # Retry logic only if proxy was just started (within last 5 seconds)
+            just_started = (
+                hasattr(self, "_start_time") and (time.time() - self._start_time) < 5
+            )
+            max_attempts = 3 if just_started else 1
 
-            # Cache results
-            self._models_cache = models
-            self._models_cache_time = time.time()
+            for attempt in range(max_attempts):
+                resp = httpx.get(url, timeout=5)
+                if resp.status_code != 200:
+                    return []
 
-            return models
+                data = resp.json()
+                # OpenAI format: {"data": [{"id": "model-name", ...}, ...]}
+                models = []
+                for model in data.get("data", []):
+                    model_id = model.get("id")
+                    if model_id:
+                        models.append(model_id)
+
+                if models:
+                    # Cache results
+                    self._models_cache = models
+                    self._models_cache_time = time.time()
+                    return models
+
+                # Empty result on fresh start, wait and retry
+                if attempt < max_attempts - 1:
+                    time.sleep(0.5)
+
+            # Return empty after retries
+            return []
         except Exception:
             return []
 
@@ -2846,16 +2862,31 @@ def models(
             )
             return
 
+        # Get default model for indicator
+        default_model = None
+        if cli_proxy_config.is_enabled():
+            dm = cli_proxy_config.get_default_model()
+            if dm:
+                default_model = f"cli-proxy-api/{dm}"
+
         table = Table(title="Available Models")
         table.add_column("Model", style="cyan")
         table.add_column("Source", style="green")
+        table.add_column("", style="yellow")  # Default indicator
 
         for model in sorted(all_models):
-            table.add_row(model, model_sources.get(model, "Unknown"))
+            is_default = model == default_model
+            table.add_row(
+                model,
+                model_sources.get(model, "Unknown"),
+                "(default)" if is_default else "",
+            )
 
         console.print(table)
         console.print()
         console.print(f"[dim]Total: {len(all_models)} models[/dim]")
+        if default_model:
+            console.print(f"[dim]Default: {default_model}[/dim]")
 
 
 @app.command()
