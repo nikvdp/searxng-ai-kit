@@ -907,12 +907,17 @@ class CLIProxyAPIConfig:
         return True
 
     def _wait_for_ready(self, timeout: int = 15) -> bool:
-        """Wait for cli-proxy-api to be ready with exponential backoff."""
+        """Wait for cli-proxy-api to be ready with exponential backoff.
+
+        Checks both server availability AND that auth/models are loaded,
+        since CLI Proxy API needs time to load auth files after startup.
+        """
         import time
 
         start = time.time()
-        url = f"http://127.0.0.1:{self.port}"
+        base_url = f"http://127.0.0.1:{self.port}"
         delay = 0.1
+        server_up = False
 
         while time.time() - start < timeout:
             # Check if process died
@@ -920,10 +925,27 @@ class CLIProxyAPIConfig:
                 return False  # Process exited
 
             try:
-                # Try the root endpoint first (doesn't require auth)
-                resp = httpx.get(url, timeout=2)
-                if resp.status_code == 200:
-                    return True
+                if not server_up:
+                    # First, check if server is responding at all
+                    resp = httpx.get(base_url, timeout=2)
+                    if resp.status_code == 200:
+                        server_up = True
+                        cli_proxy_log.debug("Server responding, checking for models...")
+
+                if server_up:
+                    # Server is up, now check if models are loaded
+                    # This ensures auth files have been processed
+                    models_resp = httpx.get(f"{base_url}/v1/models", timeout=2)
+                    if models_resp.status_code == 200:
+                        data = models_resp.json()
+                        models = data.get("data", [])
+                        if models:
+                            cli_proxy_log.debug(
+                                f"Models loaded: {len(models)} available"
+                            )
+                            return True
+                        # Server up but no models yet, keep waiting
+                        cli_proxy_log.debug("Server up but no models yet, waiting...")
             except httpx.ConnectError:
                 pass  # Not ready yet
             except Exception:
@@ -1031,45 +1053,29 @@ class CLIProxyAPIConfig:
             return []
 
         # Check cache (5 minute TTL)
-        if not force_refresh and hasattr(self, "_models_cache"):
-            cache_age = time.time() - getattr(self, "_models_cache_time", 0)
+        if not force_refresh and self._models_cache:
+            cache_age = time.time() - self._models_cache_time
             if cache_age < 300:  # 5 minutes
                 return self._models_cache
 
         try:
             url = f"http://127.0.0.1:{self.port}/v1/models"
+            resp = httpx.get(url, timeout=5)
+            if resp.status_code != 200:
+                return []
 
-            # Retry logic only if proxy was just started (within last 5 seconds)
-            just_started = (
-                hasattr(self, "_start_time") and (time.time() - self._start_time) < 5
-            )
-            max_attempts = 3 if just_started else 1
+            data = resp.json()
+            # OpenAI format: {"data": [{"id": "model-name", ...}, ...]}
+            models = []
+            for model in data.get("data", []):
+                model_id = model.get("id")
+                if model_id:
+                    models.append(model_id)
 
-            for attempt in range(max_attempts):
-                resp = httpx.get(url, timeout=5)
-                if resp.status_code != 200:
-                    return []
-
-                data = resp.json()
-                # OpenAI format: {"data": [{"id": "model-name", ...}, ...]}
-                models = []
-                for model in data.get("data", []):
-                    model_id = model.get("id")
-                    if model_id:
-                        models.append(model_id)
-
-                if models:
-                    # Cache results
-                    self._models_cache = models
-                    self._models_cache_time = time.time()
-                    return models
-
-                # Empty result on fresh start, wait and retry
-                if attempt < max_attempts - 1:
-                    time.sleep(0.5)
-
-            # Return empty after retries
-            return []
+            # Cache results
+            self._models_cache = models
+            self._models_cache_time = time.time()
+            return models
         except Exception:
             return []
 
@@ -1370,14 +1376,18 @@ def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
     # Handle models that may contain / like "moonshotai/kimi-k2:free"
     actual_model = model[len("cli-proxy-api/") :]
 
-    # For litellm, use anthropic/ prefix with custom base_url
-    # This tells litellm to use Claude's native API format (/v1/messages)
-    # which avoids the proxy_ prefix bug in CLI Proxy API's OpenAI translation
-    litellm_model = f"anthropic/{actual_model}"
-
-    # For anthropic format, base_url should NOT include /v1
-    # litellm will append the correct path (/v1/messages)
-    base_url = manager.get_base_url()
+    # Determine the appropriate litellm provider based on model name
+    # Claude models need anthropic/ prefix to use native format and avoid
+    # the proxy_ tool name prefix bug in CLI Proxy API's OpenAI translation
+    if actual_model.startswith("claude"):
+        litellm_model = f"anthropic/{actual_model}"
+        # For anthropic format, base_url should NOT include /v1
+        base_url = manager.get_base_url()
+    else:
+        # Non-Claude models (Gemini, Codex, etc.) use OpenAI-compatible format
+        litellm_model = f"openai/{actual_model}"
+        # OpenAI format needs /v1 suffix
+        base_url = f"{manager.get_base_url()}/v1"
 
     # Return dummy api_key - proxy handles actual auth
     return litellm_model, base_url, "cli-proxy-api-managed"
