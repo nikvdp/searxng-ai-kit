@@ -1322,8 +1322,8 @@ def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
     # This tells litellm to use OpenAI-compatible API format
     litellm_model = f"openai/{actual_model}"
 
-    # CRITICAL: base_url WITHOUT /v1 - litellm adds it
-    base_url = manager.get_base_url()
+    # CRITICAL: base_url WITH /v1 - litellm needs the full path
+    base_url = f"{manager.get_base_url()}/v1"
 
     # Return dummy api_key - proxy handles actual auth
     return litellm_model, base_url, "cli-proxy-api-managed"
@@ -2510,9 +2510,10 @@ async def ask_ai_async(
             "tool_choice": "auto",
         }
 
-        # Add base_url if provided (overrides environment variable)
+        # Add api_base if provided (overrides environment variable)
+        # Note: litellm uses api_base, not base_url, for OpenAI-compatible endpoints
         if base_url:
-            completion_args["base_url"] = base_url
+            completion_args["api_base"] = base_url
 
         # Add api_key if provided (for cli-proxy-api, pass per-call not via env)
         if api_key:
@@ -3628,9 +3629,10 @@ async def ask_ai_conversational_async(
             "tool_choice": "auto",
         }
 
-        # Add base_url if provided (overrides environment variable)
+        # Add api_base if provided (overrides environment variable)
+        # Note: litellm uses api_base, not base_url, for OpenAI-compatible endpoints
         if base_url:
-            completion_args["base_url"] = base_url
+            completion_args["api_base"] = base_url
 
         # Add api_key if provided (for cli-proxy-api managed models)
         if api_key:
