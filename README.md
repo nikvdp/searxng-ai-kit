@@ -368,56 +368,120 @@ searxng ask "Question" --base-url "https://openrouter.ai/api/v1" --model "openai
 
 ### CLI Proxy API Integration
 
-SearXNG AI Kit integrates with [CLI Proxy API](https://github.com/router-for-me/CLIProxyAPI) to provide access to multiple AI providers through their OAuth and subscription plans - no API keys needed!
+SearXNG AI Kit integrates with [CLI Proxy API](https://github.com/router-for-me/CLIProxyAPI) to provide access to multiple AI providers through their OAuth and subscription plans - **no API keys needed!** Use your existing Claude Pro, ChatGPT Plus, or Gemini Advanced subscriptions.
 
-**Prerequisites:**
+#### Step 1: Install CLI Proxy API
 
-1. Install cli-proxy-api from https://github.com/router-for-me/CLIProxyAPI
-2. Configure OAuth login for your providers:
-   ```bash
-   cli-proxy-api -login          # Google/Gemini
-   cli-proxy-api -claude-login   # Claude
-   cli-proxy-api -codex-login    # OpenAI Codex
-   cli-proxy-api -qwen-login     # Qwen
-   ```
-3. Create config at `~/.cli-proxy-api/config.yaml`
-
-**Usage:**
+Download the latest release from GitHub:
 
 ```bash
-# List available models from CLI Proxy API
-searxng models
+# macOS (Apple Silicon)
+curl -L https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api-darwin-arm64 -o cli-proxy-api
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
 
-# Use CLI Proxy API models
-searxng ask --model cli-proxy-api/gemini-2.5-pro "Explain quantum computing"
-searxng chat --model cli-proxy-api/claude-sonnet-4-5
+# macOS (Intel)
+curl -L https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api-darwin-amd64 -o cli-proxy-api
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
 
-# Check integration status
+# Linux (x64)
+curl -L https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api-linux-amd64 -o cli-proxy-api
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+```
+
+Or build from source: https://github.com/router-for-me/CLIProxyAPI
+
+#### Step 2: Create Configuration File
+
+Create `~/.cli-proxy-api/config.yaml`:
+
+```yaml
+host: "127.0.0.1"
+port: 8317
+auth-dir: "~/.cli-proxy-api"
+```
+
+#### Step 3: Authenticate with AI Providers
+
+Log in to the providers you want to use:
+
+```bash
+# Claude (Anthropic) - opens browser for OAuth
+cli-proxy-api -claude-login
+
+# Google Gemini - opens browser for OAuth  
+cli-proxy-api -login
+
+# OpenAI Codex - opens browser for OAuth
+cli-proxy-api -codex-login
+
+# Qwen - opens browser for OAuth
+cli-proxy-api -qwen-login
+```
+
+Each login opens your browser for OAuth authentication. After authenticating, tokens are stored in `~/.cli-proxy-api/`.
+
+#### Step 4: Configure SearXNG
+
+Tell SearXNG where your CLI Proxy API config is:
+
+```bash
+# Point to your config file
+searxng cli-proxy-api set-config ~/.cli-proxy-api/config.yaml
+
+# Enable the integration
+searxng cli-proxy-api enable
+
+# Verify everything is working
 searxng cli-proxy-api status
 ```
 
-**Configuration:**
+#### Step 5: Use It!
 
-SearXNG auto-detects cli-proxy-api config from:
-- `~/.cli-proxy-api/config.yaml`
-- `~/.config/cli-proxy-api/config.yaml`
-
-Or set an explicit path:
 ```bash
-searxng cli-proxy-api set-config /path/to/config.yaml
+# Use Claude via CLI Proxy API
+searxng ask --model cli-proxy-api/claude-sonnet-4-5-20250929 "Explain quantum computing"
+
+# Use Gemini via CLI Proxy API
+searxng ask --model cli-proxy-api/gemini-2.5-pro "What's new in AI?"
+
+# Start interactive chat
+searxng chat --model cli-proxy-api/claude-sonnet-4-5-20250929
 ```
 
-Enable/disable integration:
+#### Available Commands
+
 ```bash
+# Check status and available models
+searxng cli-proxy-api status
+
+# Enable/disable integration
 searxng cli-proxy-api enable
 searxng cli-proxy-api disable
+
+# Set config path (if not in default location)
+searxng cli-proxy-api set-config /path/to/config.yaml
+
+# Clear explicit config (use auto-detection)
+searxng cli-proxy-api clear-config
 ```
 
-**Supported Providers (via CLI Proxy API):**
-- Google Gemini (via OAuth)
-- Anthropic Claude (via OAuth)
-- OpenAI (via OAuth)
-- Alibaba Qwen (via OAuth)
+#### How It Works
+
+When you use a `cli-proxy-api/*` model:
+
+1. SearXNG automatically starts a managed cli-proxy-api subprocess on a random port
+2. Your OAuth tokens (stored by cli-proxy-api) handle authentication
+3. Requests route through the local proxy to AI providers
+4. The proxy handles token refresh and provider-specific quirks
+
+**Supported Providers:**
+- **Anthropic Claude** (via OAuth) - claude-sonnet-4-5, claude-opus-4, etc.
+- **Google Gemini** (via OAuth) - gemini-2.5-pro, gemini-2.5-flash, etc.
+- **OpenAI** (via OAuth) - gpt-4o, gpt-4o-mini, etc.
+- **Alibaba Qwen** (via OAuth)
 - Any OpenAI-compatible provider (via config)
 
 ### Custom API Endpoints
