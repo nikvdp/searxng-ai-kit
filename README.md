@@ -366,6 +366,60 @@ searxng ask "Technical research" --model "openrouter/anthropic/claude-3.5-sonnet
 searxng ask "Question" --base-url "https://openrouter.ai/api/v1" --model "openai/gpt-4o-mini"
 ```
 
+### CLI Proxy API Integration
+
+SearXNG AI Kit integrates with [CLI Proxy API](https://github.com/router-for-me/CLIProxyAPI) to provide access to multiple AI providers through their OAuth and subscription plans - no API keys needed!
+
+**Prerequisites:**
+
+1. Install cli-proxy-api from https://github.com/router-for-me/CLIProxyAPI
+2. Configure OAuth login for your providers:
+   ```bash
+   cli-proxy-api -login          # Google/Gemini
+   cli-proxy-api -claude-login   # Claude
+   cli-proxy-api -codex-login    # OpenAI Codex
+   cli-proxy-api -qwen-login     # Qwen
+   ```
+3. Create config at `~/.cli-proxy-api/config.yaml`
+
+**Usage:**
+
+```bash
+# List available models from CLI Proxy API
+searxng models
+
+# Use CLI Proxy API models
+searxng ask --model cli-proxy-api/gemini-2.5-pro "Explain quantum computing"
+searxng chat --model cli-proxy-api/claude-sonnet-4-5
+
+# Check integration status
+searxng cli-proxy-api status
+```
+
+**Configuration:**
+
+SearXNG auto-detects cli-proxy-api config from:
+- `~/.cli-proxy-api/config.yaml`
+- `~/.config/cli-proxy-api/config.yaml`
+
+Or set an explicit path:
+```bash
+searxng cli-proxy-api set-config /path/to/config.yaml
+```
+
+Enable/disable integration:
+```bash
+searxng cli-proxy-api enable
+searxng cli-proxy-api disable
+```
+
+**Supported Providers (via CLI Proxy API):**
+- Google Gemini (via OAuth)
+- Anthropic Claude (via OAuth)
+- OpenAI (via OAuth)
+- Alibaba Qwen (via OAuth)
+- Any OpenAI-compatible provider (via config)
+
 ### Custom API Endpoints
 
 Use custom OpenAI-compatible endpoints:
@@ -450,6 +504,25 @@ Add this to your `claude_desktop_config.json`:
 3. **Slow searches:**
    - Normal for first run (engine initialization)
    - Use fewer engines: `--engines duckduckgo` instead of defaults
+
+### CLI Proxy API Issues
+
+**"cli-proxy-api not found"**
+- Install cli-proxy-api: https://github.com/router-for-me/CLIProxyAPI
+- Ensure it's in your PATH
+
+**"No cli-proxy-api config found"**
+- Create config at `~/.cli-proxy-api/config.yaml`
+- Or set path: `searxng cli-proxy-api set-config /path/to/config.yaml`
+
+**"Failed to start cli-proxy-api"**
+- Check config syntax: `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`
+- Check for port conflicts
+
+**"No models available"**
+- Run OAuth login: `cli-proxy-api -login`
+- Check that config has valid credentials
+- Try `searxng cli-proxy-api status` to see detailed status
 
 ### Performance Tips
 
