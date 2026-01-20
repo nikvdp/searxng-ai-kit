@@ -2839,20 +2839,16 @@ async def handle_tool_call(name: str, arguments: dict):
         return json.dumps({"error": f"Unknown tool: {name}"})
 
 
-@app.command()
-def models(
-    refresh: bool = typer.Option(False, "--refresh", "-r", help="Refresh model cache"),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-    source: Optional[str] = typer.Option(
-        None, "--source", "-s", help="Filter by source: cli-proxy-api, profile"
-    ),
-):
-    """List available AI models from all sources.
+# Models command group
+models_app = typer.Typer(help="List and manage AI models")
 
-    Shows models available through:
-    - CLI Proxy API (if enabled and configured)
-    - Configured profiles
-    """
+
+def _list_models_impl(
+    refresh: bool = False,
+    json_output: bool = False,
+    source: Optional[str] = None,
+) -> None:
+    """Shared implementation for listing models."""
     all_models = []
     model_sources = {}  # Map model -> source
 
@@ -2908,11 +2904,7 @@ def models(
             return
 
         # Get default model for indicator
-        default_model = None
-        if cli_proxy_config.is_enabled():
-            dm = cli_proxy_config.get_default_model()
-            if dm:
-                default_model = f"cli-proxy-api/{dm}"
+        default_model = global_config.get_default_model()
 
         table = Table(title="Available Models")
         table.add_column("Model", style="cyan")
@@ -2932,6 +2924,66 @@ def models(
         console.print(f"[dim]Total: {len(all_models)} models[/dim]")
         if default_model:
             console.print(f"[dim]Default: {default_model}[/dim]")
+
+
+@models_app.command(name="list")
+def models_list(
+    refresh: bool = typer.Option(False, "--refresh", "-r", help="Refresh model cache"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s", help="Filter by source: cli-proxy-api, profile"
+    ),
+):
+    """List available AI models from all sources.
+
+    Shows models available through:
+    - CLI Proxy API (if enabled and configured)
+    - Configured profiles
+    """
+    _list_models_impl(refresh, json_output, source)
+
+
+@models_app.command(name="default")
+def models_default(
+    model: Optional[str] = typer.Argument(
+        None, help="Model to set as default (format: provider/model)"
+    ),
+    clear: bool = typer.Option(False, "--clear", "-c", help="Clear the default model"),
+):
+    """Get or set the default model for AI operations.
+
+    With no arguments, shows the current default model.
+    With a model argument, sets it as the default.
+    With --clear, removes the default model setting.
+
+    Examples:
+        searxng models default                              # Show current
+        searxng models default cli-proxy-api/claude-sonnet-4-5-20250929
+        searxng models default --clear                      # Clear default
+    """
+    _handle_default_model(model, clear, "searxng models default")
+
+
+# Make 'searxng models' without subcommand show the list (default behavior)
+@models_app.callback(invoke_without_command=True)
+def models_callback(
+    ctx: typer.Context,
+    refresh: bool = typer.Option(False, "--refresh", "-r", help="Refresh model cache"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s", help="Filter by source: cli-proxy-api, profile"
+    ),
+):
+    """List and manage AI models.
+
+    Without a subcommand, lists available models (same as 'searxng models list').
+    """
+    if ctx.invoked_subcommand is None:
+        _list_models_impl(refresh, json_output, source)
+
+
+# Add models command group to main app
+app.add_typer(models_app, name="models")
 
 
 @app.command()
@@ -4318,46 +4370,88 @@ def test(name: str = typer.Argument(..., help="Profile name")):
     profile_manager.test_profile(name)
 
 
-# Global default model commands
-@app.command()
-def set_default_model(
-    model: str = typer.Argument(
-        ..., help="Model to set as default (format: provider/model)"
+# Shared helper for default model management (used by both config and models commands)
+def _handle_default_model(
+    model: Optional[str] = None,
+    clear: bool = False,
+    hint_command: str = "searxng config default-model",
+) -> None:
+    """Shared logic for getting/setting the default model.
+
+    Args:
+        model: Model to set, or None to show current
+        clear: If True, clear the default model
+        hint_command: Command to show in help hints
+    """
+    if clear:
+        global_config.set_default_model(None)
+        console.print("[green]✓[/green] Global default model cleared")
+        console.print("[dim]Will use profile defaults or hardcoded fallbacks.[/dim]")
+    elif model:
+        global_config.set_default_model(model)
+        console.print(f"[green]✓[/green] Global default model set to: {model}")
+        console.print(
+            "[dim]This will be used for 'searxng ask' and 'searxng chat' when no --model is specified.[/dim]"
+        )
+    else:
+        current = global_config.get_default_model()
+        if current:
+            console.print(f"Global default model: {current}")
+        else:
+            console.print("No global default model set")
+            console.print(f"[dim]Use '{hint_command} <model>' to set one[/dim]")
+
+
+# Configuration management commands
+config_app = typer.Typer(help="Manage searxng configuration")
+
+
+@config_app.command(name="default-model")
+def config_default_model(
+    model: Optional[str] = typer.Argument(
+        None, help="Model to set as default (format: provider/model)"
     ),
+    clear: bool = typer.Option(False, "--clear", "-c", help="Clear the default model"),
 ):
-    """Set the global default model for all AI operations.
+    """Get or set the global default model for AI operations.
+
+    With no arguments, shows the current default model.
+    With a model argument, sets it as the default.
+    With --clear, removes the default model setting.
 
     Examples:
-        searxng set-default-model openai/gpt-4
-        searxng set-default-model anthropic/claude-3-sonnet
-        searxng set-default-model cli-proxy-api/model-name
-        searxng set-default-model openrouter/openai/gpt-4
+        searxng config default-model                    # Show current
+        searxng config default-model openai/gpt-4      # Set default
+        searxng config default-model cli-proxy-api/claude-sonnet-4-5-20250929
+        searxng config default-model --clear           # Clear default
     """
-    global_config.set_default_model(model)
-    console.print(f"[green]✓[/green] Global default model set to: {model}")
-    console.print(
-        f"[dim]This will be used for 'searxng ask' and 'searxng chat' when no --model is specified.[/dim]"
-    )
+    _handle_default_model(model, clear, "searxng config default-model")
 
 
-@app.command()
-def clear_default_model():
-    """Clear the global default model setting."""
-    global_config.set_default_model(None)
-    console.print("[green]✓[/green] Global default model cleared")
-    console.print("[dim]Will use profile defaults or hardcoded fallbacks.[/dim]")
+@config_app.command(name="show")
+def config_show():
+    """Show all configuration settings."""
+    console.print("\n[bold]Configuration[/bold]\n")
 
-
-@app.command()
-def default_model():
-    """Show the current global default model."""
-    model = global_config.get_default_model()
-    if model:
-        console.print(f"Global default model: {model}")
+    # Global default model
+    default = global_config.get_default_model()
+    if default:
+        console.print(f"Default model: {default}")
     else:
-        console.print("No global default model set")
-        console.print("[dim]Use 'searxng set-default-model <model>' to set one[/dim]")
+        console.print("Default model: [dim]not set[/dim]")
 
+    # CLI Proxy API status
+    console.print(f"\nCLI Proxy API enabled: {cli_proxy_config.is_enabled()}")
+    proxy_default = cli_proxy_config.get_default_model()
+    if proxy_default:
+        console.print(f"CLI Proxy API default model: {proxy_default}")
+
+    # Config file location
+    console.print(f"\nConfig file: {global_config.config_file}")
+
+
+# Add config command group to main app
+app.add_typer(config_app, name="config")
 
 # Add profile command group to main app
 app.add_typer(profile_app, name="profile")
