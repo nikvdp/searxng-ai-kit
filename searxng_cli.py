@@ -962,6 +962,59 @@ class CLIProxyAPIManager:
             return True
         return self.start(source_config)
 
+    def get_models(self, force_refresh: bool = False) -> List[str]:
+        """Fetch available models from cli-proxy-api.
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh data.
+
+        Returns:
+            List of model IDs available from the proxy.
+        """
+        import time
+
+        if not self.is_running():
+            return []
+
+        # Check cache (5 minute TTL)
+        if not force_refresh and hasattr(self, "_models_cache"):
+            cache_age = time.time() - getattr(self, "_models_cache_time", 0)
+            if cache_age < 300:  # 5 minutes
+                return self._models_cache
+
+        try:
+            url = f"http://127.0.0.1:{self.port}/v1/models"
+            resp = httpx.get(url, timeout=5)
+            if resp.status_code != 200:
+                return []
+
+            data = resp.json()
+            # OpenAI format: {"data": [{"id": "model-name", ...}, ...]}
+            models = []
+            for model in data.get("data", []):
+                model_id = model.get("id")
+                if model_id:
+                    models.append(model_id)
+
+            # Cache results
+            self._models_cache = models
+            self._models_cache_time = time.time()
+
+            return models
+        except Exception:
+            return []
+
+    def get_prefixed_models(self, force_refresh: bool = False) -> List[str]:
+        """Get models with cli-proxy-api/ prefix for litellm routing.
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh data.
+
+        Returns:
+            List of model IDs prefixed with 'cli-proxy-api/'.
+        """
+        return [f"cli-proxy-api/{m}" for m in self.get_models(force_refresh)]
+
 
 # --------------------
 # Session persistence
@@ -2604,6 +2657,86 @@ async def handle_tool_call(name: str, arguments: dict):
 
     else:
         return json.dumps({"error": f"Unknown tool: {name}"})
+
+
+@app.command()
+def models(
+    refresh: bool = typer.Option(False, "--refresh", "-r", help="Refresh model cache"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    source: Optional[str] = typer.Option(
+        None, "--source", "-s", help="Filter by source: cli-proxy-api, profile"
+    ),
+):
+    """List available AI models from all sources.
+
+    Shows models available through:
+    - CLI Proxy API (if enabled and configured)
+    - Configured profiles
+    """
+    all_models = []
+    model_sources = {}  # Map model -> source
+
+    # Get CLI Proxy API models if enabled and available
+    if cli_proxy_config.is_enabled() and cli_proxy_config.is_cli_proxy_available():
+        config_path = cli_proxy_config.find_cli_proxy_config()
+        if config_path:
+            manager = CLIProxyAPIManager.get_instance()
+            # Start proxy if not running
+            if manager.ensure_running(config_path):
+                proxy_models = manager.get_models(force_refresh=refresh)
+                for m in proxy_models:
+                    prefixed = f"cli-proxy-api/{m}"
+                    all_models.append(prefixed)
+                    model_sources[prefixed] = "CLI Proxy API"
+
+    # Get profile-based models (show default model from each profile)
+    data = profile_manager._load_profiles()
+    for name, profile in data.get("profiles", {}).items():
+        default_model = profile.get("default_model")
+        if default_model:
+            all_models.append(default_model)
+            model_sources[default_model] = f"Profile: {name}"
+
+    # Filter by source if requested
+    if source:
+        source_lower = source.lower()
+        if source_lower == "cli-proxy-api":
+            all_models = [m for m in all_models if m.startswith("cli-proxy-api/")]
+        elif source_lower == "profile":
+            all_models = [m for m in all_models if not m.startswith("cli-proxy-api/")]
+
+    # Output
+    if json_output:
+        output = {
+            "models": [
+                {"id": m, "source": model_sources.get(m, "Unknown")}
+                for m in sorted(all_models)
+            ]
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        if not all_models:
+            console.print("[yellow]No models available.[/yellow]")
+            console.print()
+            console.print("[dim]Tips:[/dim]")
+            console.print(
+                "[dim]  - Enable CLI Proxy API: searxng cli-proxy-api enable[/dim]"
+            )
+            console.print(
+                "[dim]  - Add a profile: searxng profile add <name> <api-key>[/dim]"
+            )
+            return
+
+        table = Table(title="Available Models")
+        table.add_column("Model", style="cyan")
+        table.add_column("Source", style="green")
+
+        for model in sorted(all_models):
+            table.add_row(model, model_sources.get(model, "Unknown"))
+
+        console.print(table)
+        console.print()
+        console.print(f"[dim]Total: {len(all_models)} models[/dim]")
 
 
 @app.command()
