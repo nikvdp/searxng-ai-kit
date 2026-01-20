@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -2423,6 +2424,45 @@ def get_mcp_tools():
     ]
 
 
+# Thinking indicator for LLM response generation
+@contextmanager
+def thinking_indicator():
+    """Show a thinking indicator during LLM calls.
+
+    TTY: animated spinner
+    Non-TTY: static "Thinking..." then "done"
+    """
+    import threading
+    import time
+
+    is_tty = sys.stderr.isatty()
+
+    if is_tty:
+        spinner_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        stop_event = threading.Event()
+
+        def animate():
+            i = 0
+            while not stop_event.is_set():
+                frame = spinner_frames[i % len(spinner_frames)]
+                print(f"\r🧠 Thinking... {frame}", end="", file=sys.stderr, flush=True)
+                i += 1
+                time.sleep(0.1)
+
+        thread = threading.Thread(target=animate, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stop_event.set()
+            thread.join(timeout=0.5)
+            print(f"\r🧠 Thinking... done", file=sys.stderr)
+    else:
+        print("🧠 Thinking...", file=sys.stderr)
+        yield
+        print("🧠 Thinking... done", file=sys.stderr)
+
+
 async def ask_ai_async(
     prompt: str,
     model: Optional[str] = None,
@@ -2600,7 +2640,8 @@ async def ask_ai_async(
             completion_args["api_key"] = api_key
 
         # Make initial request to the LLM
-        response = litellm.completion(**completion_args)
+        with thinking_indicator():
+            response = litellm.completion(**completion_args)
 
         # Handle tool calls iteratively with limit
         iteration_count = 0
@@ -2652,7 +2693,8 @@ async def ask_ai_async(
                 )
 
             # Get next response from LLM
-            response = litellm.completion(**completion_args)
+            with thinking_indicator():
+                response = litellm.completion(**completion_args)
 
         # Return the final response
         final_response = response.choices[0].message.content
@@ -3787,7 +3829,8 @@ async def ask_ai_conversational_async(
             completion_args["api_key"] = api_key
 
         # Make initial request to the LLM
-        response = litellm.completion(**completion_args)
+        with thinking_indicator():
+            response = litellm.completion(**completion_args)
 
         # Handle tool calls iteratively with limit
         iteration_count = 0
@@ -3842,7 +3885,8 @@ async def ask_ai_conversational_async(
             completion_args["messages"] = messages
 
             # Get next response from LLM
-            response = litellm.completion(**completion_args)
+            with thinking_indicator():
+                response = litellm.completion(**completion_args)
 
         # Add the final assistant response to messages
         final_response = response.choices[0].message.content
