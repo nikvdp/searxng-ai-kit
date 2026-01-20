@@ -1251,13 +1251,70 @@ class SessionStore:
 session_store = SessionStore()
 
 
+def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
+    """Initialize config for cli-proxy-api models.
+
+    Args:
+        model: Model string starting with 'cli-proxy-api/'
+
+    Returns:
+        Tuple of (litellm_model, base_url, api_key)
+
+    Raises:
+        ValueError: If cli-proxy-api is unavailable or fails to start
+    """
+    # Ensure cli-proxy-api is available
+    if not cli_proxy_config.is_cli_proxy_available():
+        raise ValueError(
+            "cli-proxy-api binary not found on PATH. "
+            "Install from: https://github.com/router-for-me/CLIProxyAPI"
+        )
+
+    # Find config
+    config_path = cli_proxy_config.find_cli_proxy_config()
+    if not config_path:
+        raise ValueError(
+            "No cli-proxy-api config found. "
+            "Set one with: searxng cli-proxy-api set-config /path/to/config.yaml"
+        )
+
+    # Start/get manager
+    manager = CLIProxyAPIManager.get_instance()
+    if not manager.ensure_running(config_path):
+        # Check if process is still running (might be waiting for OAuth)
+        if manager.is_running():
+            raise ValueError(
+                "cli-proxy-api started but not responding. "
+                "It may be waiting for OAuth authentication. "
+                f"Run 'cli-proxy-api -config {config_path}' manually to complete OAuth setup."
+            )
+        raise ValueError(
+            "Failed to start cli-proxy-api. "
+            "Check the config file and try: searxng cli-proxy-api start"
+        )
+
+    # Extract actual model name (remove prefix)
+    # Handle models that may contain / like "moonshotai/kimi-k2:free"
+    actual_model = model[len("cli-proxy-api/") :]
+
+    # For litellm, use openai/ prefix with custom base_url
+    # This tells litellm to use OpenAI-compatible API format
+    litellm_model = f"openai/{actual_model}"
+
+    # CRITICAL: base_url WITHOUT /v1 - litellm adds it
+    base_url = manager.get_base_url()
+
+    # Return dummy api_key - proxy handles actual auth
+    return litellm_model, base_url, "cli-proxy-api-managed"
+
+
 def initialize_ai_config(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     profile: Optional[str] = None,
-) -> Tuple[str, Optional[str]]:
+) -> Tuple[str, Optional[str], Optional[str]]:
     """
-    Initialize AI configuration from profiles and environment.
+    Initialize AI configuration from profiles, CLI Proxy API, and environment.
 
     This is the single source of truth for AI configuration across:
     - CLI commands (ask, chat)
@@ -1265,14 +1322,20 @@ def initialize_ai_config(
     - Library interface
 
     Args:
-        model: Explicit model override
+        model: Explicit model override (use 'cli-proxy-api/model-name' for proxy models)
         base_url: Explicit base URL override
         profile: Specific profile name to use (None = use default)
 
     Returns:
-        Tuple of (model, base_url) configured and ready to use
+        Tuple of (model, base_url, api_key) configured and ready to use.
+        api_key is None for standard providers (uses env vars), or a dummy
+        key for cli-proxy-api models.
     """
     import os
+
+    # Check if model is a cli-proxy-api model
+    if model and model.startswith("cli-proxy-api/"):
+        return _initialize_cli_proxy_config(model)
 
     # Load profile configuration
     profile_config = None
@@ -1309,7 +1372,8 @@ def initialize_ai_config(
     if not model:
         model = "openai/gpt-5"
 
-    return model, base_url
+    # Return None for api_key - litellm will use env vars
+    return model, base_url, None
 
 
 class CLISearch:
@@ -2280,25 +2344,35 @@ async def ask_ai_async(
     import os
     import sys
 
-    # Initialize configuration from profiles
-    model, base_url = initialize_ai_config(model, base_url, profile)
-
-    # Check for API keys after profile initialization
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
-    }
-
-    # Check if we have at least one API key
-    if not any(api_keys.values()):
+    # Initialize configuration from profiles or CLI Proxy API
+    try:
+        model, base_url, api_key = initialize_ai_config(model, base_url, profile)
+    except ValueError as e:
+        # CLI Proxy API or profile errors
         return {
             "success": False,
-            "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+            "error": str(e),
             "prompt": prompt,
-            "model": model,
+            "model": model or "unknown",
         }
+
+    # Check for API keys after profile initialization (skip if using cli-proxy-api)
+    if api_key is None:  # Standard provider, check env vars
+        api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+            "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+        }
+
+        # Check if we have at least one API key
+        if not any(api_keys.values()):
+            return {
+                "success": False,
+                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+                "prompt": prompt,
+                "model": model,
+            }
 
     # Define tools for the LLM
     tools = [
@@ -2419,6 +2493,10 @@ async def ask_ai_async(
         if base_url:
             completion_args["base_url"] = base_url
 
+        # Add api_key if provided (for cli-proxy-api, pass per-call not via env)
+        if api_key:
+            completion_args["api_key"] = api_key
+
         # Make initial request to the LLM
         response = litellm.completion(**completion_args)
 
@@ -2525,7 +2603,7 @@ async def handle_tool_call(name: str, arguments: dict):
 
         try:
             # Initialize config early to get defaults and env set
-            resolved_model, resolved_base = initialize_ai_config(
+            resolved_model, resolved_base, resolved_api_key = initialize_ai_config(
                 model, base_url, profile
             )
 
@@ -3387,25 +3465,35 @@ async def ask_ai_conversational_async(
     import litellm
     import os
 
-    # Initialize configuration from profiles
-    model, base_url = initialize_ai_config(model, base_url, profile)
-
-    # Check for API keys after profile initialization
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
-    }
-
-    # Check if we have at least one API key
-    if not any(api_keys.values()):
+    # Initialize configuration from profiles or CLI Proxy API
+    try:
+        model, base_url, api_key = initialize_ai_config(model, base_url, profile)
+    except ValueError as e:
+        # CLI Proxy API or profile errors
         return {
             "success": False,
-            "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
-            "model": model,
+            "error": str(e),
+            "model": model or "unknown",
             "messages": messages,
         }
+
+    # Check for API keys after profile initialization (skip if using cli-proxy-api)
+    if api_key is None:  # Standard provider, check env vars
+        api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+            "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+        }
+
+        # Check if we have at least one API key
+        if not any(api_keys.values()):
+            return {
+                "success": False,
+                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+                "model": model,
+                "messages": messages,
+            }
 
     # Define tools for the LLM (same as ask function)
     tools = [
@@ -3522,6 +3610,10 @@ async def ask_ai_conversational_async(
         # Add base_url if provided (overrides environment variable)
         if base_url:
             completion_args["base_url"] = base_url
+
+        # Add api_key if provided (for cli-proxy-api managed models)
+        if api_key:
+            completion_args["api_key"] = api_key
 
         # Make initial request to the LLM
         response = litellm.completion(**completion_args)
@@ -3702,7 +3794,7 @@ def chat(
             raise typer.Exit(1)
 
     # Initialize configuration from profiles (sets env vars, defaults)
-    model, base_url = initialize_ai_config(model, base_url, selected_profile)
+    model, base_url, api_key = initialize_ai_config(model, base_url, selected_profile)
 
     async def run_interactive_chat():
         import signal
