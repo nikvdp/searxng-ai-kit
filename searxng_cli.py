@@ -512,6 +512,130 @@ profile_manager = ProfileManager()
 
 
 # --------------------
+# CLI Proxy API Config
+# --------------------
+class CLIProxyAPIConfig:
+    """Manages CLI Proxy API configuration for searxng integration.
+
+    Configuration is stored in ~/.config/searxng/config.toml under [cli-proxy-api] section.
+    """
+
+    def __init__(self, config_dir: Optional[Path] = None):
+        self.config_dir = config_dir or profile_manager.config_dir
+        self.config_file = self.config_dir / "config.toml"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load config from TOML file."""
+        if not self.config_file.exists():
+            return {}
+        try:
+            with open(self.config_file, "rb") as f:
+                return tomllib.load(f)
+        except Exception as e:
+            console.print(f"[red]Error loading config: {e}[/red]")
+            return {}
+
+    def _save_config(self, data: Dict[str, Any]):
+        """Save config to TOML file."""
+        import toml
+
+        try:
+            with open(self.config_file, "w") as f:
+                toml.dump(data, f)
+            os.chmod(self.config_file, 0o600)
+        except Exception as e:
+            console.print(f"[red]Error saving config: {e}[/red]")
+            raise typer.Exit(1)
+
+    def _get_section(self) -> Dict[str, Any]:
+        """Get the cli-proxy-api section from config."""
+        data = self._load_config()
+        return data.get("cli-proxy-api", {})
+
+    def _set_section(self, section: Dict[str, Any]):
+        """Set the cli-proxy-api section in config."""
+        data = self._load_config()
+        data["cli-proxy-api"] = section
+        self._save_config(data)
+
+    def is_enabled(self) -> bool:
+        """Check if CLI Proxy API integration is enabled."""
+        section = self._get_section()
+        return section.get("enabled", False)
+
+    def set_enabled(self, enabled: bool):
+        """Enable or disable CLI Proxy API integration."""
+        section = self._get_section()
+        section["enabled"] = enabled
+        self._set_section(section)
+
+    def get_config_path(self) -> Optional[str]:
+        """Get explicit config path if set."""
+        section = self._get_section()
+        path = section.get("config-path", "")
+        return path if path else None
+
+    def set_config_path(self, path: Optional[str]):
+        """Set explicit config path."""
+        section = self._get_section()
+        section["config-path"] = path or ""
+        self._set_section(section)
+
+    def find_cli_proxy_config(self) -> Optional[Path]:
+        """Auto-detect cli-proxy-api config file location.
+
+        Checks in order:
+        1. Explicit path from config
+        2. ~/.cli-proxy-api/config.yaml
+        3. ~/.config/cli-proxy-api/config.yaml (XDG)
+        """
+        # 1. Check explicit path from config
+        explicit = self.get_config_path()
+        if explicit:
+            explicit_path = Path(explicit).expanduser()
+            if explicit_path.exists():
+                return explicit_path
+
+        # 2. Check ~/.cli-proxy-api/config.yaml
+        home_config = Path.home() / ".cli-proxy-api" / "config.yaml"
+        if home_config.exists():
+            return home_config
+
+        # 3. Check XDG config location
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "")
+        if xdg_config_home:
+            xdg_path = Path(xdg_config_home) / "cli-proxy-api" / "config.yaml"
+        else:
+            xdg_path = Path.home() / ".config" / "cli-proxy-api" / "config.yaml"
+        if xdg_path.exists():
+            return xdg_path
+
+        return None
+
+    def is_cli_proxy_available(self) -> bool:
+        """Check if cli-proxy-api binary is available on PATH."""
+        import shutil
+
+        return shutil.which("cli-proxy-api") is not None
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get comprehensive status of CLI Proxy API integration."""
+        config_path = self.find_cli_proxy_config()
+        return {
+            "enabled": self.is_enabled(),
+            "binary_available": self.is_cli_proxy_available(),
+            "config_found": config_path is not None,
+            "config_path": str(config_path) if config_path else None,
+            "explicit_config_path": self.get_config_path(),
+        }
+
+
+# Global CLI Proxy API config instance
+cli_proxy_config = CLIProxyAPIConfig()
+
+
+# --------------------
 # Session persistence
 # --------------------
 class SessionStore:
@@ -3524,6 +3648,126 @@ def test(name: str = typer.Argument(..., help="Profile name")):
 
 # Add profile command group to main app
 app.add_typer(profile_app, name="profile")
+
+
+# CLI Proxy API management commands
+cli_proxy_app = typer.Typer(help="Manage CLI Proxy API integration")
+
+
+@cli_proxy_app.command()
+def status():
+    """Show CLI Proxy API integration status."""
+    status_info = cli_proxy_config.get_status()
+
+    console.print("\n[bold]CLI Proxy API Status[/bold]\n")
+
+    # Binary availability
+    if status_info["binary_available"]:
+        console.print("[green]✓[/green] cli-proxy-api binary found on PATH")
+    else:
+        console.print("[red]✗[/red] cli-proxy-api binary not found on PATH")
+        console.print(
+            "  [dim]Install from: https://github.com/router-for-me/CLIProxyAPI[/dim]"
+        )
+
+    # Integration enabled
+    if status_info["enabled"]:
+        console.print("[green]✓[/green] Integration enabled")
+    else:
+        console.print("[yellow]○[/yellow] Integration disabled")
+
+    # Config file
+    if status_info["config_found"]:
+        console.print(f"[green]✓[/green] Config found: {status_info['config_path']}")
+    else:
+        console.print("[yellow]○[/yellow] No config file found")
+        console.print(
+            "  [dim]Checked: ~/.cli-proxy-api/config.yaml, ~/.config/cli-proxy-api/config.yaml[/dim]"
+        )
+
+    # Explicit config path
+    if status_info["explicit_config_path"]:
+        console.print(
+            f"  [dim]Explicit path set: {status_info['explicit_config_path']}[/dim]"
+        )
+
+    # Overall readiness
+    console.print()
+    if status_info["binary_available"] and status_info["config_found"]:
+        if status_info["enabled"]:
+            console.print("[green]Ready to use CLI Proxy API for AI requests[/green]")
+        else:
+            console.print(
+                "[yellow]CLI Proxy API available but disabled. Run 'searxng cli-proxy enable' to enable.[/yellow]"
+            )
+    else:
+        missing = []
+        if not status_info["binary_available"]:
+            missing.append("binary")
+        if not status_info["config_found"]:
+            missing.append("config")
+        console.print(f"[red]Not ready: missing {', '.join(missing)}[/red]")
+
+
+@cli_proxy_app.command()
+def enable():
+    """Enable CLI Proxy API integration."""
+    cli_proxy_config.set_enabled(True)
+    console.print("[green]CLI Proxy API integration enabled.[/green]")
+
+    # Check if actually usable
+    status_info = cli_proxy_config.get_status()
+    if not status_info["binary_available"]:
+        console.print(
+            "[yellow]Warning: cli-proxy-api binary not found on PATH[/yellow]"
+        )
+    if not status_info["config_found"]:
+        console.print("[yellow]Warning: No cli-proxy-api config file found[/yellow]")
+
+
+@cli_proxy_app.command()
+def disable():
+    """Disable CLI Proxy API integration."""
+    cli_proxy_config.set_enabled(False)
+    console.print("[green]CLI Proxy API integration disabled.[/green]")
+
+
+@cli_proxy_app.command(name="set-config")
+def set_config(
+    path: str = typer.Argument(..., help="Path to cli-proxy-api config.yaml file"),
+):
+    """Set explicit path to cli-proxy-api config file."""
+    # Expand and validate path
+    config_path = Path(path).expanduser().resolve()
+
+    if not config_path.exists():
+        console.print(f"[red]Error: File not found: {config_path}[/red]")
+        raise typer.Exit(1)
+
+    if not config_path.is_file():
+        console.print(f"[red]Error: Not a file: {config_path}[/red]")
+        raise typer.Exit(1)
+
+    cli_proxy_config.set_config_path(str(config_path))
+    console.print(f"[green]Config path set to: {config_path}[/green]")
+
+
+@cli_proxy_app.command(name="clear-config")
+def clear_config():
+    """Clear explicit config path (use auto-detection)."""
+    cli_proxy_config.set_config_path(None)
+    console.print("[green]Config path cleared. Will use auto-detection.[/green]")
+
+    # Show what will be auto-detected
+    found = cli_proxy_config.find_cli_proxy_config()
+    if found:
+        console.print(f"[dim]Auto-detected config: {found}[/dim]")
+    else:
+        console.print("[dim]No config file found in standard locations.[/dim]")
+
+
+# Add cli-proxy-api command group to main app
+app.add_typer(cli_proxy_app, name="cli-proxy-api")
 
 
 def main():
