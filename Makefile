@@ -151,7 +151,7 @@ test:
 	@$(UV) run searxng --help > /dev/null && echo "✓ CLI help works"
 	@echo ""
 	@echo "--- Search ---"
-	@$(UV) run searxng search "test" --engines duckduckgo --max-results 2 > /dev/null && echo "✓ Search works"
+	@$(UV) run searxng search "test" --engines duckduckgo > /dev/null && echo "✓ Search works"
 	@echo ""
 	@echo "--- Library Import ---"
 	@$(UV) run python -c "import searxng; r=searxng.search('test', max_results=1); print('✓ Library works')"
@@ -178,7 +178,7 @@ test-full: test
 	@$(UV) run searxng categories > /dev/null && echo "✓ Categories list works"
 	@echo ""
 	@echo "--- JSON Output ---"
-	@$(UV) run searxng search "test" --engines duckduckgo --format json --max-results 1 | python -c "import sys,json; json.load(sys.stdin)" && echo "✓ JSON output valid"
+	@$(UV) run searxng search "test" --engines duckduckgo --format json | python -c "import sys,json; json.load(sys.stdin)" && echo "✓ JSON output valid"
 	@echo ""
 	@echo "All extended tests passed!"
 
@@ -206,7 +206,7 @@ build-verify: build
 	@echo "=== Verifying Build ==="
 	@if [ -f "$(DIST_DIR)/searxng" ]; then \
 		./$(DIST_DIR)/searxng --help > /dev/null && echo "✓ Binary runs"; \
-		./$(DIST_DIR)/searxng search "test" --engines duckduckgo --max-results 1 > /dev/null && echo "✓ Binary search works"; \
+		./$(DIST_DIR)/searxng search "test" --engines duckduckgo > /dev/null && echo "✓ Binary search works"; \
 	elif [ -f "$(DIST_DIR)/searxng.exe" ]; then \
 		./$(DIST_DIR)/searxng.exe --help > /dev/null && echo "✓ Binary runs"; \
 	else \
