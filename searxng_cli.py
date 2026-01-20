@@ -38,6 +38,9 @@ def configure_logging():
 # Configure logging early
 configure_logging()
 
+# Logger for CLI Proxy API operations
+cli_proxy_log = logging.getLogger("searxng.cli_proxy_api")
+
 # Import vendored SearXNG modules
 import searx
 import searx.engines
@@ -534,13 +537,13 @@ class GlobalConfig:
     def _save_config(self, data: Dict[str, Any]):
         """Save configuration to TOML file."""
         try:
-            import tomli_w
+            import toml
 
-            with open(self.config_file, "wb") as f:
-                tomli_w.dump(data, f)
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                toml.dump(data, f)
             self._config_data = data
-        except Exception:
-            pass
+        except Exception as e:
+            console.print(f"[red]Error saving config: {e}[/red]")
 
     def get_default_model(self) -> Optional[str]:
         """Get the global default model."""
@@ -548,7 +551,8 @@ class GlobalConfig:
 
     def set_default_model(self, model: Optional[str]):
         """Set the global default model."""
-        data = self._config_data.copy()
+        # Reload config to get latest (may have been modified by CLIProxyAPIConfig)
+        data = self._load_config()
         if model:
             data["default_model"] = model
         else:
@@ -573,6 +577,176 @@ class CLIProxyAPIConfig:
         self.config_dir = config_dir or profile_manager.config_dir
         self.config_file = self.config_dir / "config.toml"
         self.config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Process management state
+        self.process: Optional[subprocess.Popen] = None
+        self.port: Optional[int] = None
+        self.temp_config_path: Optional[Path] = None
+        self._started = False
+        self._restart_count = 0
+        self._max_restarts = 3
+        self._start_time: Optional[float] = None
+        self._lock_file: Optional[Path] = None
+        self._models_cache: List[str] = []
+        self._models_cache_time: float = 0
+
+    def _get_section(self) -> Dict[str, Any]:
+        """Get the cli-proxy-api section from config."""
+        config = self._load_config()
+        return config.get("cli-proxy-api", {})
+
+    def _save_section(self, section_data: Dict[str, Any]):
+        """Save the cli-proxy-api section, preserving other sections."""
+        config = self._load_config()
+        config["cli-proxy-api"] = section_data
+        self._save_config(config)
+
+    def is_enabled(self) -> bool:
+        """Check if CLI Proxy API integration is enabled."""
+        return self._get_section().get("enabled", False)
+
+    def set_enabled(self, enabled: bool):
+        """Enable or disable CLI Proxy API integration."""
+        section = self._get_section()
+        section["enabled"] = enabled
+        self._save_section(section)
+
+    def get_config_path(self) -> Optional[str]:
+        """Get the configured cli-proxy-api config path."""
+        return self._get_section().get("config-path")
+
+    def set_config_path(self, path: Optional[str]):
+        """Set the cli-proxy-api config path."""
+        section = self._get_section()
+        if path:
+            section["config-path"] = path
+        else:
+            section.pop("config-path", None)
+        self._save_section(section)
+
+    def get_default_model(self) -> Optional[str]:
+        """Get the default model for cli-proxy-api."""
+        return self._get_section().get("default-model")
+
+    def set_default_model(self, model: Optional[str]):
+        """Set the default model for cli-proxy-api."""
+        section = self._get_section()
+        if model:
+            section["default-model"] = model
+        else:
+            section.pop("default-model", None)
+        self._save_section(section)
+
+    def is_cli_proxy_available(self) -> bool:
+        """Check if cli-proxy-api binary is available on PATH."""
+        import shutil
+
+        return shutil.which("cli-proxy-api") is not None
+
+    def find_cli_proxy_config(self) -> Optional[Path]:
+        """Find cli-proxy-api config file.
+
+        Priority:
+        1. Explicitly configured path
+        2. Common locations (~/.config/cli-proxy-api/config.yaml, etc.)
+        """
+        # Check explicit config path first
+        explicit_path = self.get_config_path()
+        if explicit_path:
+            p = Path(explicit_path).expanduser()
+            if p.exists():
+                return p
+
+        # Check common locations
+        common_paths = [
+            Path.home() / ".config" / "cli-proxy-api" / "config.yaml",
+            Path.home() / ".cli-proxy-api" / "config.yaml",
+            Path.home() / "tmp" / "CLIProxyAPI" / "config.yaml",
+            Path("/etc/cli-proxy-api/config.yaml"),
+        ]
+
+        for path in common_paths:
+            if path.exists():
+                return path
+
+        return None
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get comprehensive status information."""
+        config_path = self.find_cli_proxy_config()
+        return {
+            "enabled": self.is_enabled(),
+            "binary_available": self.is_cli_proxy_available(),
+            "config_found": config_path is not None,
+            "config_path": str(config_path) if config_path else None,
+            "explicit_config_path": self.get_config_path(),
+            "default_model": self.get_default_model(),
+            "process_running": self.is_running(),
+            "port": self.port,
+        }
+
+    def _acquire_lock(self) -> bool:
+        """Acquire a file lock to prevent concurrent starts."""
+        lock_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "searxng"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        self._lock_file = lock_dir / "cli-proxy-api.lock"
+
+        try:
+            # Try to create lock file exclusively
+            fd = os.open(
+                str(self._lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+            )
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            # Lock exists, check if process is still alive
+            try:
+                with open(self._lock_file, "r") as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, 0)  # Check if process exists
+                return False  # Process still running
+            except (ValueError, ProcessLookupError, PermissionError):
+                # Stale lock, remove and retry
+                try:
+                    self._lock_file.unlink()
+                    return self._acquire_lock()
+                except Exception:
+                    return False
+        except Exception:
+            return False
+
+    def _release_lock(self):
+        """Release the file lock."""
+        if self._lock_file and self._lock_file.exists():
+            try:
+                self._lock_file.unlink()
+            except Exception:
+                pass
+        self._lock_file = None
+
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        import signal
+        import atexit
+
+        def cleanup():
+            self.stop()
+
+        atexit.register(cleanup)
+
+        # Handle SIGTERM gracefully
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def sigterm_handler(signum, frame):
+            self.stop()
+            if callable(original_sigterm):
+                original_sigterm(signum, frame)
+
+        try:
+            signal.signal(signal.SIGTERM, sigterm_handler)
+        except Exception:
+            pass  # May fail in non-main thread
 
     def _load_config(self) -> Dict[str, Any]:
         """Load config from TOML file."""
@@ -1178,7 +1352,7 @@ def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
         )
 
     # Start/get manager
-    manager = CLIProxyAPIManager.get_instance()
+    manager = cli_proxy_config
     if not manager.ensure_running(config_path):
         # Check if process is still running (might be waiting for OAuth)
         if manager.is_running():
@@ -2674,7 +2848,7 @@ def models(
     if cli_proxy_config.is_enabled() and cli_proxy_config.is_cli_proxy_available():
         config_path = cli_proxy_config.find_cli_proxy_config()
         if config_path:
-            manager = CLIProxyAPIManager.get_instance()
+            manager = cli_proxy_config
             # Start proxy if not running
             if manager.ensure_running(config_path):
                 proxy_models = manager.get_models(force_refresh=refresh)
@@ -3343,6 +3517,8 @@ def ask(
             raise typer.Exit(1)
 
     async def run_chat():
+        stderr_console = Console(file=sys.stderr, force_terminal=True)
+
         # Use the shared ask function with profile support
         result = await ask_ai_async(
             prompt=prompt,
@@ -3354,7 +3530,6 @@ def ask(
 
         # Log model info to stderr if successful
         if result.get("success"):
-            stderr_console = Console(file=sys.stderr, force_terminal=True)
             stderr_console.print(
                 f"[dim]Using model: [blue]{result.get('model', 'unknown')}[/blue][/dim]"
             )
@@ -4230,7 +4405,7 @@ def status():
 
     # Process status (only if binary and config available)
     if status_info["binary_available"] and status_info["config_found"]:
-        manager = CLIProxyAPIManager.get_instance()
+        manager = cli_proxy_config
         if manager.is_running():
             console.print(f"[green]✓[/green] Process running on port {manager.port}")
             # Try to get model count
@@ -4370,7 +4545,7 @@ def start_proxy():
 
     console.print(f"[blue]Starting cli-proxy-api with config: {config_path}[/blue]")
 
-    manager = CLIProxyAPIManager.get_instance()
+    manager = cli_proxy_config
     if manager.start(config_path):
         console.print(f"[green]Started successfully on port {manager.port}[/green]")
         console.print(f"[dim]Base URL: {manager.get_base_url()}[/dim]")
@@ -4395,7 +4570,7 @@ def start_proxy():
 @cli_proxy_app.command(name="stop")
 def stop_proxy():
     """Stop cli-proxy-api subprocess if running."""
-    manager = CLIProxyAPIManager.get_instance()
+    manager = cli_proxy_config
     if manager.is_running():
         manager.stop()
         console.print("[green]Stopped cli-proxy-api[/green]")

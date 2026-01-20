@@ -74,8 +74,8 @@ py-modules = ["searxng_cli"]
 [tool.setuptools.package-data]
 searx = ["**/*"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "ipykernel>=6.29.5",
     "ipython>=9.3.0",
     "pyinstaller>=6.14.1",
