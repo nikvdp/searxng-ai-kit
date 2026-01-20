@@ -1370,12 +1370,14 @@ def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
     # Handle models that may contain / like "moonshotai/kimi-k2:free"
     actual_model = model[len("cli-proxy-api/") :]
 
-    # For litellm, use openai/ prefix with custom base_url
-    # This tells litellm to use OpenAI-compatible API format
-    litellm_model = f"openai/{actual_model}"
+    # For litellm, use anthropic/ prefix with custom base_url
+    # This tells litellm to use Claude's native API format (/v1/messages)
+    # which avoids the proxy_ prefix bug in CLI Proxy API's OpenAI translation
+    litellm_model = f"anthropic/{actual_model}"
 
-    # CRITICAL: base_url WITH /v1 - litellm needs the full path
-    base_url = f"{manager.get_base_url()}/v1"
+    # For anthropic format, base_url should NOT include /v1
+    # litellm will append the correct path (/v1/messages)
+    base_url = manager.get_base_url()
 
     # Return dummy api_key - proxy handles actual auth
     return litellm_model, base_url, "cli-proxy-api-managed"
