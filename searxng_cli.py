@@ -1635,6 +1635,10 @@ def get_mcp_tools():
                         "type": "string",
                         "description": "Profile name to use for API keys and config (default: uses default profile)",
                     },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Maximum number of tool calling iterations (default: 200)",
+                    },
                 },
                 "required": ["message"],
             },
@@ -1725,6 +1729,10 @@ def get_mcp_tools():
                         "type": "string",
                         "description": "Profile name to use for API keys and config (default: uses default profile)",
                     },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Maximum number of tool calling iterations (default: 200)",
+                    },
                 },
                 "required": ["prompt"],
             },
@@ -1737,6 +1745,7 @@ async def ask_ai_async(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     profile: Optional[str] = None,
+    max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
     Core async function for asking AI with web search tools.
@@ -1747,6 +1756,7 @@ async def ask_ai_async(
         model: Optional model override (defaults to profile or "openai/gpt-5")
         base_url: Optional base URL override
         profile: Optional profile name to use (defaults to default profile)
+        max_iterations: Maximum number of tool calling iterations (default: 200)
     """
     import litellm
     import os
@@ -1894,8 +1904,10 @@ async def ask_ai_async(
         # Make initial request to the LLM
         response = litellm.completion(**completion_args)
 
-        # Handle tool calls iteratively
-        while response.choices[0].message.tool_calls:
+        # Handle tool calls iteratively with limit
+        iteration_count = 0
+        while response.choices[0].message.tool_calls and iteration_count < max_iterations:
+            iteration_count += 1
             # Add the assistant's message with tool calls
             messages.append(response.choices[0].message.model_dump())
 
@@ -1989,6 +2001,7 @@ async def handle_tool_call(name: str, arguments: dict):
         model = arguments.get("model")
         base_url = arguments.get("base_url")
         profile = arguments.get("profile")
+        max_iterations = arguments.get("max_iterations", 200)
 
         try:
             # Initialize config early to get defaults and env set
@@ -2015,7 +2028,7 @@ async def handle_tool_call(name: str, arguments: dict):
 
             # Call conversational async
             result = await ask_ai_conversational_async(
-                messages=hist, model=resolved_model, base_url=resolved_base, profile=profile
+                messages=hist, model=resolved_model, base_url=resolved_base, profile=profile, max_iterations=max_iterations
             )
 
             if result.get("success"):
@@ -2109,7 +2122,8 @@ async def handle_tool_call(name: str, arguments: dict):
         profile = arguments.get("profile")  # Optional profile name
 
         # Use the shared ask_ai_async function with profile support
-        result = await ask_ai_async(prompt, model, base_url, profile)
+        max_iterations = arguments.get("max_iterations", 200)
+        result = await ask_ai_async(prompt, model, base_url, profile, max_iterations)
         return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
 
     else:
@@ -2674,6 +2688,9 @@ def ask(
     profile: Optional[str] = typer.Option(
         None, "--profile", "-p", help="Profile to use for API key and configuration"
     ),
+    max_iterations: int = typer.Option(
+        200, "--max-iterations", help="Maximum number of tool calling iterations (default: 200)"
+    ),
 ):
     """Ask an AI assistant with web search tools (one-shot Q&A). For interactive conversations, use 'searxng chat'."""
     import litellm
@@ -2708,7 +2725,7 @@ def ask(
     async def run_chat():
         # Use the shared ask function with profile support
         result = await ask_ai_async(
-            prompt=prompt, model=model, base_url=base_url, profile=profile
+            prompt=prompt, model=model, base_url=base_url, profile=profile, max_iterations=max_iterations
         )
 
         # Log model info to stderr if successful
@@ -2739,6 +2756,7 @@ async def ask_ai_conversational_async(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     profile: Optional[str] = None,
+    max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
     Core async function for conversational AI chat with web search tools.
@@ -2749,6 +2767,7 @@ async def ask_ai_conversational_async(
         model: Optional model override (defaults to profile or "openai/gpt-5")
         base_url: Optional base URL override
         profile: Optional profile name to use (defaults to default profile)
+        max_iterations: Maximum number of tool calling iterations (default: 200)
     """
     import litellm
     import os
@@ -2892,8 +2911,10 @@ async def ask_ai_conversational_async(
         # Make initial request to the LLM
         response = litellm.completion(**completion_args)
 
-        # Handle tool calls iteratively
-        while response.choices[0].message.tool_calls:
+        # Handle tool calls iteratively with limit
+        iteration_count = 0
+        while response.choices[0].message.tool_calls and iteration_count < max_iterations:
+            iteration_count += 1
             # Add the assistant's message with tool calls
             messages.append(response.choices[0].message.model_dump())
 
@@ -3012,6 +3033,9 @@ def chat(
         "--resume",
         "-r",
         help="Resume the most recently updated session",
+    ),
+    max_iterations: int = typer.Option(
+        200, "--max-iterations", help="Maximum number of tool calling iterations (default: 200)"
     ),
 ):
     """Start or resume an interactive chat session with history persistence.
@@ -3272,6 +3296,7 @@ def chat(
                         model=model,
                         base_url=base_url,
                         profile=selected_profile,
+                        max_iterations=max_iterations,
                     )
             except KeyboardInterrupt:
                 stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
@@ -3348,6 +3373,7 @@ def chat(
                             model=model,
                             base_url=base_url,
                             profile=selected_profile,
+                            max_iterations=max_iterations,
                         )
                 except KeyboardInterrupt:
                     stderr_console.print("\n[yellow]Interrupted. Goodbye![/yellow]")

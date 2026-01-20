@@ -188,6 +188,7 @@ def ask(
     *,
     model: str = "openai/o3",
     base_url: Optional[str] = None,
+    max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
     Ask an AI assistant with access to web search and URL fetching tools.
@@ -199,6 +200,7 @@ def ask(
         prompt: Question or research request
         model: Model to use in format "provider/model" (default: "openai/o3")
         base_url: Custom API base URL (overrides OPENAI_BASE_URL env var)
+        max_iterations: Maximum number of tool calling iterations (default: 200)
 
     Returns:
         Dictionary containing the AI response:
@@ -238,7 +240,7 @@ def ask(
         ...     base_url="https://custom-endpoint.com/v1"
         ... )
     """
-    return asyncio.run(ask_async(prompt=prompt, model=model, base_url=base_url))
+    return asyncio.run(ask_async(prompt=prompt, model=model, base_url=base_url, max_iterations=max_iterations))
 
 
 # Async API (direct access to underlying functions)
@@ -339,6 +341,7 @@ async def ask_async(
     *,
     model: str = "openai/o3",
     base_url: Optional[str] = None,
+    max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
     Async version of ask(). See ask() for documentation.
@@ -351,7 +354,7 @@ async def ask_async(
         ...         print(response["response"])
         >>> asyncio.run(main())
     """
-    return await ask_ai_async(prompt=prompt, model=model, base_url=base_url)
+    return await ask_ai_async(prompt=prompt, model=model, base_url=base_url, max_iterations=max_iterations)
 
 
 # Convenience classes for more structured usage
@@ -459,9 +462,10 @@ class SearXNGClient:
         *,
         model: str = "openai/o3",
         base_url: Optional[str] = None,
+        max_iterations: int = 200,
     ) -> Dict[str, Any]:
         """Ask an AI assistant using client settings."""
-        return ask(prompt=prompt, model=model, base_url=base_url)
+        return ask(prompt=prompt, model=model, base_url=base_url, max_iterations=max_iterations)
 
     async def ask_async(
         self,
@@ -469,6 +473,7 @@ class SearXNGClient:
         *,
         model: str = "openai/o3",
         base_url: Optional[str] = None,
+        max_iterations: int = 200,
     ) -> Dict[str, Any]:
         """Async ask an AI assistant using client settings."""
-        return await ask_async(prompt=prompt, model=model, base_url=base_url)
+        return await ask_async(prompt=prompt, model=model, base_url=base_url, max_iterations=max_iterations)
