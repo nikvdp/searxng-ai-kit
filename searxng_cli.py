@@ -619,6 +619,18 @@ class CLIProxyAPIConfig:
 
         return shutil.which("cli-proxy-api") is not None
 
+    def get_default_model(self) -> Optional[str]:
+        """Get the default model for cli-proxy-api."""
+        section = self._get_section()
+        model = section.get("default-model", "")
+        return model if model else None
+
+    def set_default_model(self, model: Optional[str]):
+        """Set the default model for cli-proxy-api."""
+        section = self._get_section()
+        section["default-model"] = model or ""
+        self._set_section(section)
+
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive status of CLI Proxy API integration."""
         config_path = self.find_cli_proxy_config()
@@ -628,6 +640,7 @@ class CLIProxyAPIConfig:
             "config_found": config_path is not None,
             "config_path": str(config_path) if config_path else None,
             "explicit_config_path": self.get_config_path(),
+            "default_model": self.get_default_model(),
         }
 
 
@@ -1357,6 +1370,12 @@ def initialize_ai_config(
     # Check if model is a cli-proxy-api model
     if model and model.startswith("cli-proxy-api/"):
         return _initialize_cli_proxy_config(model)
+
+    # If no model specified, check for cli-proxy-api default model
+    if not model and cli_proxy_config.is_enabled():
+        default_model = cli_proxy_config.get_default_model()
+        if default_model:
+            return _initialize_cli_proxy_config(f"cli-proxy-api/{default_model}")
 
     # Load profile configuration
     profile_config = None
@@ -4267,6 +4286,17 @@ def status():
             f"  [dim]Explicit path set: {status_info['explicit_config_path']}[/dim]"
         )
 
+    # Default model
+    if status_info["default_model"]:
+        console.print(
+            f"[green]✓[/green] Default model: cli-proxy-api/{status_info['default_model']}"
+        )
+    else:
+        console.print("[dim]○[/dim] No default model set")
+        console.print(
+            "  [dim]Set with: searxng cli-proxy-api set-default-model <model>[/dim]"
+        )
+
     # Process status (only if binary and config available)
     if status_info["binary_available"] and status_info["config_found"]:
         manager = CLIProxyAPIManager.get_instance()
@@ -4356,6 +4386,39 @@ def clear_config():
         console.print(f"[dim]Auto-detected config: {found}[/dim]")
     else:
         console.print("[dim]No config file found in standard locations.[/dim]")
+
+
+@cli_proxy_app.command(name="set-default-model")
+def set_default_model(
+    model: str = typer.Argument(
+        ..., help="Model name (e.g., claude-sonnet-4-5-20250929)"
+    ),
+):
+    """Set the default model for cli-proxy-api.
+
+    When set, 'searxng ask' and 'searxng chat' will use this model
+    automatically without needing --model flag.
+
+    Example:
+        searxng cli-proxy-api set-default-model claude-sonnet-4-5-20250929
+        searxng ask "question"  # Uses cli-proxy-api/claude-sonnet-4-5-20250929
+    """
+    # Strip cli-proxy-api/ prefix if provided
+    if model.startswith("cli-proxy-api/"):
+        model = model[len("cli-proxy-api/") :]
+
+    cli_proxy_config.set_default_model(model)
+    console.print(f"[green]Default model set to: cli-proxy-api/{model}[/green]")
+    console.print(
+        "[dim]Use 'searxng ask' or 'searxng chat' without --model to use this default[/dim]"
+    )
+
+
+@cli_proxy_app.command(name="clear-default-model")
+def clear_default_model():
+    """Clear the default model setting."""
+    cli_proxy_config.set_default_model(None)
+    console.print("[green]Default model cleared.[/green]")
 
 
 @cli_proxy_app.command(name="start")
