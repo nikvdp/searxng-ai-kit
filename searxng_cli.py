@@ -201,8 +201,12 @@ def sessions_show(
 @sessions_app.command("rm")
 def sessions_rm(
     session_id: str = typer.Argument(..., help="Session ID or unique prefix"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm deletion without prompt"),
-    keep_transcript: bool = typer.Option(False, "--keep-transcript", help="Do not delete transcript file"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Confirm deletion without prompt"
+    ),
+    keep_transcript: bool = typer.Option(
+        False, "--keep-transcript", help="Do not delete transcript file"
+    ),
 ):
     """Remove a session JSON (and transcript unless kept)."""
     try:
@@ -220,6 +224,8 @@ def sessions_rm(
 
 
 app.add_typer(sessions_app, name="sessions")
+
+
 # Profile management for API keys and configurations
 class ProfileManager:
     """Manages user profiles for API keys and configurations."""
@@ -579,7 +585,11 @@ class SessionStore:
     def append_message(
         self, session: Dict[str, Any], role: str, content: str, **extra: Any
     ) -> Dict[str, Any]:
-        msg: Dict[str, Any] = {"role": role, "content": content, "ts": datetime.utcnow().isoformat()}
+        msg: Dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "ts": datetime.utcnow().isoformat(),
+        }
         msg.update({k: v for k, v in extra.items() if v is not None})
         session.setdefault("messages", []).append(msg)
         # Auto-title based on the first user message if not set
@@ -620,7 +630,10 @@ class SessionStore:
         # Title
         if not s.get("title"):
             try:
-                first_user = next((m for m in msgs if m.get("role") == "user" and m.get("content")), None)
+                first_user = next(
+                    (m for m in msgs if m.get("role") == "user" and m.get("content")),
+                    None,
+                )
                 if first_user:
                     pv = str(first_user.get("content", "")).strip().splitlines()[0]
                     s["title"] = pv[:80] if pv else ""
@@ -629,7 +642,9 @@ class SessionStore:
         # updated_at fallback
         if not s.get("updated_at"):
             try:
-                last_ts = next((m.get("ts") for m in reversed(msgs) if m.get("ts")), None)
+                last_ts = next(
+                    (m.get("ts") for m in reversed(msgs) if m.get("ts")), None
+                )
                 if last_ts:
                     s["updated_at"] = last_ts
             except Exception:
@@ -701,7 +716,8 @@ class SessionStore:
             if len(exact_prefix) == 1:
                 return exact_prefix[0]
             raise ValueError(
-                "Ambiguous session prefix; matches: " + ", ".join(m[:8] for m in matches[:5])
+                "Ambiguous session prefix; matches: "
+                + ", ".join(m[:8] for m in matches[:5])
             )
         return matches[0]
 
@@ -902,11 +918,8 @@ def json_serial(obj: Any) -> Any:
 def initialize_searx():
     """Initialize SearXNG search system."""
     try:
-        settings_engines = searx.settings["engines"]
-        searx.search.load_engines(settings_engines)
-        searx.search.initialize_network(settings_engines, searx.settings["outgoing"])
-        searx.search.initialize_metrics([engine["name"] for engine in settings_engines])
-        searx.search.initialize_processors(settings_engines)
+        # Use the unified initialize() function (SearXNG API changed upstream)
+        searx.search.initialize()
         return True
     except Exception as e:
         console.print(f"[red]Error initializing SearXNG: {e}[/red]")
@@ -1906,7 +1919,9 @@ async def ask_ai_async(
 
         # Handle tool calls iteratively with limit
         iteration_count = 0
-        while response.choices[0].message.tool_calls and iteration_count < max_iterations:
+        while (
+            response.choices[0].message.tool_calls and iteration_count < max_iterations
+        ):
             iteration_count += 1
             # Add the assistant's message with tool calls
             messages.append(response.choices[0].message.model_dump())
@@ -2005,14 +2020,19 @@ async def handle_tool_call(name: str, arguments: dict):
 
         try:
             # Initialize config early to get defaults and env set
-            resolved_model, resolved_base = initialize_ai_config(model, base_url, profile)
+            resolved_model, resolved_base = initialize_ai_config(
+                model, base_url, profile
+            )
 
             if provided_session_id:
                 session = session_store.load(provided_session_id)
                 session_id = session["session_id"]
             else:
                 session = session_store.create(
-                    model=resolved_model, base_url=resolved_base, profile=profile, title=""
+                    model=resolved_model,
+                    base_url=resolved_base,
+                    profile=profile,
+                    title="",
                 )
                 session_id = session["session_id"]
 
@@ -2028,7 +2048,11 @@ async def handle_tool_call(name: str, arguments: dict):
 
             # Call conversational async
             result = await ask_ai_conversational_async(
-                messages=hist, model=resolved_model, base_url=resolved_base, profile=profile, max_iterations=max_iterations
+                messages=hist,
+                model=resolved_model,
+                base_url=resolved_base,
+                profile=profile,
+                max_iterations=max_iterations,
             )
 
             if result.get("success"):
@@ -2689,7 +2713,9 @@ def ask(
         None, "--profile", "-p", help="Profile to use for API key and configuration"
     ),
     max_iterations: int = typer.Option(
-        200, "--max-iterations", help="Maximum number of tool calling iterations (default: 200)"
+        200,
+        "--max-iterations",
+        help="Maximum number of tool calling iterations (default: 200)",
     ),
 ):
     """Ask an AI assistant with web search tools (one-shot Q&A). For interactive conversations, use 'searxng chat'."""
@@ -2725,7 +2751,11 @@ def ask(
     async def run_chat():
         # Use the shared ask function with profile support
         result = await ask_ai_async(
-            prompt=prompt, model=model, base_url=base_url, profile=profile, max_iterations=max_iterations
+            prompt=prompt,
+            model=model,
+            base_url=base_url,
+            profile=profile,
+            max_iterations=max_iterations,
         )
 
         # Log model info to stderr if successful
@@ -2913,7 +2943,9 @@ async def ask_ai_conversational_async(
 
         # Handle tool calls iteratively with limit
         iteration_count = 0
-        while response.choices[0].message.tool_calls and iteration_count < max_iterations:
+        while (
+            response.choices[0].message.tool_calls and iteration_count < max_iterations
+        ):
             iteration_count += 1
             # Add the assistant's message with tool calls
             messages.append(response.choices[0].message.model_dump())
@@ -3035,7 +3067,9 @@ def chat(
         help="Resume the most recently updated session",
     ),
     max_iterations: int = typer.Option(
-        200, "--max-iterations", help="Maximum number of tool calling iterations (default: 200)"
+        200,
+        "--max-iterations",
+        help="Maximum number of tool calling iterations (default: 200)",
     ),
 ):
     """Start or resume an interactive chat session with history persistence.
@@ -3053,7 +3087,9 @@ def chat(
 
     # Convenience: --resume picks most recent session when --session not provided
     if resume and not session and not new:
-        most_recent = session_store.list_sessions(limit=1, sort_by="updated_at", reverse=True)
+        most_recent = session_store.list_sessions(
+            limit=1, sort_by="updated_at", reverse=True
+        )
         if most_recent:
             session = most_recent[0].get("session_id")
             console.print(f"[dim]Resuming most recent session: {session[:8]}...[/dim]")
@@ -3132,7 +3168,9 @@ def chat(
                 chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
                 with open(chat_file, "w", encoding="utf-8") as f:
                     f.write(f"# SearXNG AI Kit Chat Session\n\n")
-                    f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n")
+                    f.write(
+                        f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n"
+                    )
                     f.write(f"**Model:** {model}  \\n")
                     f.write(f"**Session:** {session_id}  \\n\\n")
                     f.write("---\n\n")
@@ -3148,7 +3186,9 @@ def chat(
             chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
             with open(chat_file, "w", encoding="utf-8") as f:
                 f.write(f"# SearXNG AI Kit Chat Session\n\n")
-                f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n")
+                f.write(
+                    f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n"
+                )
                 f.write(f"**Model:** {model}  \\n")
                 f.write(f"**Session:** (pending)  \\n\\n")
                 f.write("---\n\n")
@@ -3190,7 +3230,9 @@ def chat(
                 if role == "user":
                     stderr_console.print(f"[bold green]You:[/bold green] {content}")
                 elif role == "assistant":
-                    stderr_console.print(f"[bold blue]{model_label}:[/bold blue] {content}")
+                    stderr_console.print(
+                        f"[bold blue]{model_label}:[/bold blue] {content}"
+                    )
                 else:
                     continue
                 stderr_console.print()
