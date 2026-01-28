@@ -193,8 +193,7 @@ build: clean
 		echo "Error: pyproject.toml not configured. Run 'make dev' first."; \
 		exit 1; \
 	fi
-	$(UV) sync
-	$(UV) add pyinstaller
+	$(UV) sync --group dev
 	$(UV) run pyinstaller searxng.spec
 	@echo ""
 	@echo "Build complete!"
@@ -236,9 +235,8 @@ ci-build:
 	@echo "Step 1: Building SearXNG wheel..."
 	$(MAKE) build-wheel
 	@echo ""
-	@echo "Step 2: Syncing dependencies..."
-	$(UV) sync
-	$(UV) add pyinstaller
+	@echo "Step 2: Syncing dependencies (including dev for pyinstaller)..."
+	$(UV) sync --group dev
 	@echo ""
 	@echo "Step 3: Cleaning previous builds..."
 	rm -rf build/ $(DIST_DIR)/ *.spec.bak || true
