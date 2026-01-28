@@ -4242,7 +4242,7 @@ def model_list_cmd():
     table.add_column("Type", style="magenta")
     table.add_column("Model ID", style="green")
     table.add_column("Source", style="blue")
-    table.add_column("Default", style="yellow")
+    table.add_column("Default", style="green")
 
     # Add registry models
     for name, model in models.items():
