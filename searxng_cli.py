@@ -1397,21 +1397,20 @@ def initialize_ai_config(
         if not model:
             global_default = global_config.get_default_model()
             if global_default:
-                model = global_default
-
-        # Re-check cli-proxy-api model after global default
-        if model and model.startswith("cli-proxy-api/"):
-            return _initialize_cli_proxy_config(model)
+                # Check if global default is a cli-proxy-api model
+                if global_default.startswith("cli-proxy-api/"):
+                    return _initialize_cli_proxy_config(global_default)
+                # Otherwise treat it as a registry name and look it up
+                model_config = model_manager.get_model(global_default)
+                if not model_config:
+                    # Not in registry - use as literal model string
+                    model = global_default
 
         # If still no model specified, check for cli-proxy-api default model
-        if not model and cli_proxy_config.is_enabled():
+        if not model and not model_config and cli_proxy_config.is_enabled():
             default_model = cli_proxy_config.get_default_model()
             if default_model:
                 return _initialize_cli_proxy_config(f"cli-proxy-api/{default_model}")
-
-        # Try default model from registry if no explicit overrides
-        if not model and not base_url:
-            model_config = model_manager.get_model()  # Gets default model
 
     # Apply model configuration if available
     if model_config:
