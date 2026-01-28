@@ -366,6 +366,145 @@ searxng ask "Technical research" --model "openrouter/anthropic/claude-3.5-sonnet
 searxng ask "Question" --base-url "https://openrouter.ai/api/v1" --model "openai/gpt-4o-mini"
 ```
 
+### CLI Proxy API Integration
+
+SearXNG AI Kit integrates with [CLI Proxy API](https://github.com/router-for-me/CLIProxyAPI) to provide access to multiple AI providers through their OAuth and subscription plans - **no API keys needed!** Use your existing Claude Pro, ChatGPT Plus, or Gemini Advanced subscriptions.
+
+#### Step 1: Install CLI Proxy API
+
+Download the latest release from GitHub:
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api-darwin-arm64 -o cli-proxy-api
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api-darwin-amd64 -o cli-proxy-api
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+
+# Linux (x64)
+curl -L https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api-linux-amd64 -o cli-proxy-api
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+```
+
+Or build from source: https://github.com/router-for-me/CLIProxyAPI
+
+#### Step 2: Create Configuration File
+
+Create `~/.cli-proxy-api/config.yaml`:
+
+```yaml
+host: "127.0.0.1"
+port: 8317
+auth-dir: "~/.cli-proxy-api"
+```
+
+#### Step 3: Authenticate with AI Providers
+
+Log in to the providers you want to use:
+
+```bash
+# Claude (Anthropic) - opens browser for OAuth
+cli-proxy-api -claude-login
+
+# Google Gemini - opens browser for OAuth  
+cli-proxy-api -login
+
+# OpenAI Codex - opens browser for OAuth
+cli-proxy-api -codex-login
+
+# Qwen - opens browser for OAuth
+cli-proxy-api -qwen-login
+```
+
+Each login opens your browser for OAuth authentication. After authenticating, tokens are stored in `~/.cli-proxy-api/`.
+
+#### Step 4: Configure SearXNG
+
+Tell SearXNG where your CLI Proxy API config is:
+
+```bash
+# Point to your config file
+searxng cli-proxy-api set-config ~/.cli-proxy-api/config.yaml
+
+# Enable the integration
+searxng cli-proxy-api enable
+
+# Verify everything is working
+searxng cli-proxy-api status
+```
+
+#### Step 5: Set a Default Model (Optional)
+
+```bash
+# Set a default model so you don't need --model every time
+searxng cli-proxy-api set-default-model claude-sonnet-4-5-20250929
+
+# Now just use ask/chat without --model
+searxng ask "Explain quantum computing"
+searxng chat
+```
+
+#### Step 6: Use It!
+
+```bash
+# List all available models
+searxng models
+
+# Use CLI Proxy API models (with explicit model)
+searxng ask --model cli-proxy-api/claude-sonnet-4-5-20250929 "Explain quantum computing"
+
+# Or just use the default (if set)
+searxng ask "What's new in AI?"
+
+# Start interactive chat
+searxng chat
+```
+
+#### Available Commands
+
+```bash
+# List all available models (shows default)
+searxng models
+
+# Check status
+searxng cli-proxy-api status
+
+# Set/clear default model
+searxng cli-proxy-api set-default-model claude-sonnet-4-5-20250929
+searxng cli-proxy-api clear-default-model
+
+# Enable/disable integration
+searxng cli-proxy-api enable
+searxng cli-proxy-api disable
+
+# Set config path (if not in default location)
+searxng cli-proxy-api set-config /path/to/config.yaml
+
+# Clear explicit config (use auto-detection)
+searxng cli-proxy-api clear-config
+```
+
+#### How It Works
+
+When you use a `cli-proxy-api/*` model:
+
+1. SearXNG automatically starts a managed cli-proxy-api subprocess on a random port
+2. Your OAuth tokens (stored by cli-proxy-api) handle authentication
+3. Requests route through the local proxy to AI providers
+4. The proxy handles token refresh and provider-specific quirks
+
+**Supported Providers:**
+- **Anthropic Claude** (via OAuth) - claude-sonnet-4-5, claude-opus-4, etc.
+- **Google Gemini** (via OAuth) - gemini-2.5-pro, gemini-2.5-flash, etc.
+- **OpenAI** (via OAuth) - gpt-4o, gpt-4o-mini, etc.
+- **Alibaba Qwen** (via OAuth)
+- Any OpenAI-compatible provider (via config)
+
 ### Custom API Endpoints
 
 Use custom OpenAI-compatible endpoints:
@@ -450,6 +589,25 @@ Add this to your `claude_desktop_config.json`:
 3. **Slow searches:**
    - Normal for first run (engine initialization)
    - Use fewer engines: `--engines duckduckgo` instead of defaults
+
+### CLI Proxy API Issues
+
+**"cli-proxy-api not found"**
+- Install cli-proxy-api: https://github.com/router-for-me/CLIProxyAPI
+- Ensure it's in your PATH
+
+**"No cli-proxy-api config found"**
+- Create config at `~/.cli-proxy-api/config.yaml`
+- Or set path: `searxng cli-proxy-api set-config /path/to/config.yaml`
+
+**"Failed to start cli-proxy-api"**
+- Check config syntax: `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`
+- Check for port conflicts
+
+**"No models available"**
+- Run OAuth login: `cli-proxy-api -login`
+- Check that config has valid credentials
+- Try `searxng cli-proxy-api status` to see detailed status
 
 ### Performance Tips
 

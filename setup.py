@@ -35,11 +35,13 @@ class BuildSearXNGWheel:
                 return
 
             try:
-                result = subprocess.run([sys.executable, str(build_script)],
-                                      cwd=script_dir,
-                                      capture_output=True,
-                                      text=True,
-                                      check=True)
+                result = subprocess.run(
+                    [sys.executable, str(build_script)],
+                    cwd=script_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
                 print("✓ SearXNG wheel built successfully")
 
                 # Find the generated wheel
@@ -64,9 +66,12 @@ class BuildSearXNGWheel:
 
         try:
             # Install the wheel directly
-            subprocess.run([
-                sys.executable, "-m", "pip", "install", str(wheel_file)
-            ], check=True, capture_output=True, text=True)
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", str(wheel_file)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             print("✓ SearXNG wheel installed successfully")
 
             # Remove the placeholder dependency from pyproject.toml
@@ -77,6 +82,39 @@ class BuildSearXNGWheel:
             print(f"STDOUT: {e.stdout}")
             print(f"STDERR: {e.stderr}")
 
+    def is_searx_up_to_date(self, wheel_file):
+        """Check if the vendored searx directory is up-to-date with the wheel."""
+        script_dir = Path(__file__).parent
+        searx_dest = script_dir / "searx"
+
+        # If searx directory doesn't exist, needs extraction
+        if not searx_dest.exists():
+            return False
+
+        # Check if __init__.py exists (basic sanity check)
+        init_file = searx_dest / "__init__.py"
+        if not init_file.exists():
+            return False
+
+        # Compare wheel mtime with searx directory mtime
+        # If wheel is newer than searx, we need to re-extract
+        wheel_mtime = wheel_file.stat().st_mtime
+        searx_mtime = searx_dest.stat().st_mtime
+
+        if wheel_mtime > searx_mtime:
+            return False
+
+        # Also check pyproject.toml exists and is newer than wheel
+        pyproject_file = script_dir / "pyproject.toml"
+        if not pyproject_file.exists():
+            return False
+
+        pyproject_mtime = pyproject_file.stat().st_mtime
+        if wheel_mtime > pyproject_mtime:
+            return False
+
+        return True
+
     def extract_and_vendor_searxng(self, wheel_file):
         """Extract SearXNG wheel and vendor its modules into our package."""
         import shutil
@@ -85,6 +123,11 @@ class BuildSearXNGWheel:
 
         script_dir = Path(__file__).parent
 
+        # Check if extraction is needed
+        if self.is_searx_up_to_date(wheel_file):
+            print(f"✓ Vendored searx is up-to-date with wheel")
+            return True
+
         print(f"Extracting SearXNG wheel: {wheel_file.name}")
 
         # Create temporary extraction directory
@@ -92,7 +135,7 @@ class BuildSearXNGWheel:
             temp_path = Path(temp_dir)
 
             # Extract the wheel
-            with zipfile.ZipFile(wheel_file, 'r') as wheel_zip:
+            with zipfile.ZipFile(wheel_file, "r") as wheel_zip:
                 wheel_zip.extractall(temp_path)
 
             # Find the searx directory in the extracted content
@@ -137,30 +180,32 @@ class BuildSearXNGWheel:
             temp_path = Path(temp_dir)
 
             # Extract the wheel
-            with zipfile.ZipFile(wheel_file, 'r') as wheel_zip:
+            with zipfile.ZipFile(wheel_file, "r") as wheel_zip:
                 wheel_zip.extractall(temp_path)
 
             # Find METADATA file
             for metadata_file in temp_path.rglob("METADATA"):
-                with open(metadata_file, 'r') as f:
+                with open(metadata_file, "r") as f:
                     metadata = f.read()
 
                 # Extract Requires-Dist lines
                 requires = []
-                for line in metadata.split('\n'):
-                    if line.startswith('Requires-Dist:'):
-                        dep = line.replace('Requires-Dist: ', '').strip()
+                for line in metadata.split("\n"):
+                    if line.startswith("Requires-Dist:"):
+                        dep = line.replace("Requires-Dist: ", "").strip()
                         # Skip test/dev dependencies (those with extras)
-                        if '; extra ==' not in dep:
+                        if "; extra ==" not in dep:
                             # Handle conditional dependencies like "tomli>=2.2.1; python_version < \"3.11\""
-                            if ';' in dep and 'python_version' in dep:
+                            if ";" in dep and "python_version" in dep:
                                 # Keep conditional dependencies as-is
                                 requires.append(dep)
-                            elif ';' not in dep:
+                            elif ";" not in dep:
                                 # Keep regular dependencies
                                 requires.append(dep)
 
-                print(f"✓ Extracted {len(requires)} runtime dependencies from wheel METADATA")
+                print(
+                    f"✓ Extracted {len(requires)} runtime dependencies from wheel METADATA"
+                )
                 return requires
 
         print("Warning: Could not find METADATA in wheel")
@@ -176,6 +221,15 @@ class BuildSearXNGWheel:
             print("Warning: pyproject.toml.template not found")
             return
 
+        # Check if pyproject.toml already exists and is newer than both template and wheel
+        if output_file.exists():
+            output_mtime = output_file.stat().st_mtime
+            template_mtime = template_file.stat().st_mtime
+            wheel_mtime = wheel_file.stat().st_mtime
+            if output_mtime > template_mtime and output_mtime > wheel_mtime:
+                # pyproject.toml is up-to-date, skip regeneration
+                return
+
         # Extract SearXNG dependencies
         searxng_deps = self.extract_searxng_dependencies(wheel_file)
 
@@ -190,19 +244,23 @@ class BuildSearXNGWheel:
                 # Use double quotes for normal dependencies
                 deps_lines.append(f'    "{dep}",')
 
-        deps_section = '\n'.join(deps_lines)
+        deps_section = "\n".join(deps_lines)
 
         # Read template and replace placeholder
-        with open(template_file, 'r') as f:
+        with open(template_file, "r") as f:
             template_content = f.read()
 
-        final_content = template_content.replace('{{SEARXNG_DEPENDENCIES}}', deps_section)
+        final_content = template_content.replace(
+            "{{SEARXNG_DEPENDENCIES}}", deps_section
+        )
 
         # Write final pyproject.toml
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             f.write(final_content)
 
-        print(f"✓ Generated pyproject.toml with {len(searxng_deps)} dynamic SearXNG dependencies")
+        print(
+            f"✓ Generated pyproject.toml with {len(searxng_deps)} dynamic SearXNG dependencies"
+        )
 
 
 class CustomEggInfo(BuildSearXNGWheel, egg_info):
@@ -221,12 +279,10 @@ class CustomBuildPy(BuildSearXNGWheel, build_py):
         super().run()
 
 
-
-
 if __name__ == "__main__":
     setup(
         cmdclass={
-            'egg_info': CustomEggInfo,
-            'build_py': CustomBuildPy,
+            "egg_info": CustomEggInfo,
+            "build_py": CustomBuildPy,
         }
     )
