@@ -4329,6 +4329,7 @@ KNOWN_PROVIDERS = {
         "type": "anthropic",
         "base_url": "https://api.minimax.io/anthropic",
         "models": {
+            "MiniMax-M2.1": {"name": "MiniMax M2.1"},
             "MiniMax-M2": {"name": "MiniMax M2"},
             "MiniMax-M2-Stable": {"name": "MiniMax M2 Stable"},
         },
@@ -4337,6 +4338,7 @@ KNOWN_PROVIDERS = {
         "type": "anthropic",
         "base_url": "https://api.minimax.io/anthropic",
         "models": {
+            "MiniMax-M2.1": {"name": "MiniMax M2.1"},
             "MiniMax-M2": {"name": "MiniMax M2"},
             "MiniMax-M2-Stable": {"name": "MiniMax M2 Stable"},
         },
