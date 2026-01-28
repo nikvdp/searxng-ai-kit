@@ -1358,7 +1358,7 @@ def initialize_ai_config(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     model_name: Optional[str] = None,
-) -> Tuple[str, Optional[str], Optional[str]]:
+) -> Tuple[str, Optional[str], Optional[str], str]:
     """
     Initialize AI configuration from model registry, CLI Proxy API, and environment.
 
@@ -1373,15 +1373,20 @@ def initialize_ai_config(
         model_name: Model registry name to use (None = use default from registry)
 
     Returns:
-        Tuple of (model, base_url, api_key) configured and ready to use.
+        Tuple of (model, base_url, api_key, display_name) configured and ready to use.
         api_key is None for standard providers (uses env vars), or a dummy
         key for cli-proxy-api models.
+        display_name is the user-friendly name (registry name or model string).
     """
     import os
 
+    # Track display name for user output
+    display_name = None
+
     # Check if model is a cli-proxy-api model (explicit override)
     if model and model.startswith("cli-proxy-api/"):
-        return _initialize_cli_proxy_config(model)
+        m, b, k = _initialize_cli_proxy_config(model)
+        return m, b, k, model  # display_name is the cli-proxy-api model string
 
     # If model_name is explicitly provided, prioritize it over all defaults
     # Load model configuration from registry
@@ -1390,6 +1395,7 @@ def initialize_ai_config(
         model_config = model_manager.get_model(model_name)
         if not model_config:
             raise ValueError(f"Model '{model_name}' not found in registry")
+        display_name = model_name
 
     # Only use defaults if model_name was not explicitly provided
     if not model_config:
@@ -1399,18 +1405,24 @@ def initialize_ai_config(
             if global_default:
                 # Check if global default is a cli-proxy-api model
                 if global_default.startswith("cli-proxy-api/"):
-                    return _initialize_cli_proxy_config(global_default)
+                    m, b, k = _initialize_cli_proxy_config(global_default)
+                    return m, b, k, global_default
                 # Otherwise treat it as a registry name and look it up
                 model_config = model_manager.get_model(global_default)
-                if not model_config:
+                if model_config:
+                    display_name = global_default
+                else:
                     # Not in registry - use as literal model string
                     model = global_default
+                    display_name = global_default
 
         # If still no model specified, check for cli-proxy-api default model
         if not model and not model_config and cli_proxy_config.is_enabled():
             default_model = cli_proxy_config.get_default_model()
             if default_model:
-                return _initialize_cli_proxy_config(f"cli-proxy-api/{default_model}")
+                full_name = f"cli-proxy-api/{default_model}"
+                m, b, k = _initialize_cli_proxy_config(full_name)
+                return m, b, k, full_name
 
     # Apply model configuration if available
     if model_config:
@@ -1437,8 +1449,12 @@ def initialize_ai_config(
     if not model:
         model = "openai/gpt-5"
 
+    # Set display_name to model if not already set
+    if not display_name:
+        display_name = model
+
     # Return None for api_key - litellm will use env vars
-    return model, base_url, None
+    return model, base_url, None, display_name
 
 
 class CLISearch:
@@ -2450,7 +2466,9 @@ async def ask_ai_async(
 
     # Initialize configuration from model registry or CLI Proxy API
     try:
-        model, base_url, api_key = initialize_ai_config(model, base_url, model_name)
+        model, base_url, api_key, display_name = initialize_ai_config(
+            model, base_url, model_name
+        )
     except ValueError as e:
         # CLI Proxy API or model registry errors
         return {
@@ -2462,7 +2480,7 @@ async def ask_ai_async(
 
     # Print model info early (before any API calls)
     stderr_console = Console(file=sys.stderr)
-    stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
+    stderr_console.print(f"[dim]Using model: [blue]{display_name}[/blue][/dim]")
 
     # Check for API keys after model config initialization (skip if using cli-proxy-api)
     if api_key is None:  # Standard provider, check env vars
@@ -2714,7 +2732,7 @@ async def handle_tool_call(name: str, arguments: dict):
 
         try:
             # Initialize config early to get defaults and env set
-            resolved_model, resolved_base, resolved_api_key = initialize_ai_config(
+            resolved_model, resolved_base, resolved_api_key, _ = initialize_ai_config(
                 model, base_url, model_name
             )
 
@@ -3510,7 +3528,7 @@ async def ask_ai_conversational_async(
 
     # Initialize configuration from model registry or CLI Proxy API
     try:
-        model, base_url, api_key = initialize_ai_config(model, base_url, model_name)
+        model, base_url, api_key, _ = initialize_ai_config(model, base_url, model_name)
     except ValueError as e:
         # CLI Proxy API or model registry errors
         return {
@@ -3843,7 +3861,7 @@ def chat(
             raise typer.Exit(1)
 
     # Initialize configuration from model registry (sets env vars, defaults)
-    model, base_url, api_key = initialize_ai_config(
+    model, base_url, api_key, model_display_name = initialize_ai_config(
         model, base_url, selected_model_name
     )
 
@@ -3932,7 +3950,9 @@ def chat(
         # Setup console for input/output
         stderr_console = Console(file=sys.stderr, force_terminal=True)
         stderr_console.print(f"[dim]SearXNG AI Kit - Interactive Chat[/dim]")
-        stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
+        stderr_console.print(
+            f"[dim]Using model: [blue]{model_display_name}[/blue][/dim]"
+        )
         stderr_console.print(f"[dim]Chat history: {chat_file}[/dim]")
         stderr_console.print(f"[dim]Session ID: [cyan]{session_id}[/cyan][/dim]")
         stderr_console.print(
