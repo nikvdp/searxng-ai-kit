@@ -1426,6 +1426,9 @@ def initialize_ai_config(
                 m, b, k = _initialize_cli_proxy_config(full_name)
                 return m, b, k, full_name
 
+    # Track api_key for returning to caller
+    api_key = None
+
     # Apply model configuration if available
     if model_config:
         # Build LiteLLM model string from registry entry
@@ -1436,16 +1439,9 @@ def initialize_ai_config(
         if not base_url and model_config.get("base_url"):
             base_url = model_config["base_url"]
 
-        # Set API key environment variable based on model type
-        env_map = {
-            "openrouter": "OPENROUTER_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "gemini": "GOOGLE_API_KEY",
-        }
-        env_key = env_map.get(model_config.get("type"))
-        if env_key and model_config.get("api_key") and not os.environ.get(env_key):
-            os.environ[env_key] = model_config["api_key"]
+        # Get API key from model config if available
+        if model_config.get("api_key"):
+            api_key = model_config["api_key"]
 
     # Set default model if still not set
     if not model:
@@ -1455,8 +1451,8 @@ def initialize_ai_config(
     if not display_name:
         display_name = model
 
-    # Return None for api_key - litellm will use env vars
-    return model, base_url, None, display_name
+    # Return api_key if available (for registry models with custom base_url)
+    return model, base_url, api_key, display_name
 
 
 class CLISearch:
@@ -3510,6 +3506,7 @@ async def ask_ai_conversational_async(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
     max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
@@ -3521,24 +3518,29 @@ async def ask_ai_conversational_async(
         model: Optional LiteLLM model string override (defaults to registry or "openai/gpt-5")
         base_url: Optional base URL override
         model_name: Optional model registry name to use (defaults to default from registry)
+        api_key: Optional API key (if already resolved, skip re-initialization)
         max_iterations: Maximum number of tool calling iterations (default: 200)
     """
     import litellm
     import os
 
-    # Initialize configuration from model registry or CLI Proxy API
-    try:
-        model, base_url, api_key, _ = initialize_ai_config(model, base_url, model_name)
-    except ValueError as e:
-        # CLI Proxy API or model registry errors
-        return {
-            "success": False,
-            "error": str(e),
-            "model": model or "unknown",
-            "messages": messages,
-        }
+    # If api_key is already provided, skip re-initialization (caller already resolved config)
+    if api_key is None:
+        # Initialize configuration from model registry or CLI Proxy API
+        try:
+            model, base_url, api_key, _ = initialize_ai_config(
+                model, base_url, model_name
+            )
+        except ValueError as e:
+            # CLI Proxy API or model registry errors
+            return {
+                "success": False,
+                "error": str(e),
+                "model": model or "unknown",
+                "messages": messages,
+            }
 
-    # Check for API keys after model config initialization (skip if using cli-proxy-api)
+    # Check for API keys after model config initialization (skip if using cli-proxy-api or custom key)
     if api_key is None:  # Standard provider, check env vars
         api_keys = {
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
@@ -4089,6 +4091,7 @@ def chat(
                         model=model,
                         base_url=base_url,
                         model_name=None,  # Already resolved via initialize_ai_config
+                        api_key=api_key,  # Pass through resolved API key
                         max_iterations=max_iterations,
                     )
             except KeyboardInterrupt:
@@ -4168,6 +4171,7 @@ def chat(
                             model=model,
                             base_url=base_url,
                             model_name=None,  # Already resolved via initialize_ai_config
+                            api_key=api_key,  # Pass through resolved API key
                             max_iterations=max_iterations,
                         )
                 except KeyboardInterrupt:
@@ -4427,26 +4431,62 @@ KNOWN_PROVIDERS = {
             "glm-4.5v": {"name": "GLM 4.5 Vision"},
         },
     },
-    "opencode": {
+    # OpenCode Zen - Claude models (Anthropic API)
+    "opencode-zen-anthropic": {
         "type": "anthropic",
-        "base_url": "https://opencode.ai/zen",
+        "base_url": "https://opencode.ai/zen/v1",
         "models": {
-            # Anthropic Claude models
             "claude-opus-4-5": {"name": "Claude Opus 4.5"},
             "claude-opus-4-1": {"name": "Claude Opus 4.1"},
             "claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"},
             "claude-sonnet-4": {"name": "Claude Sonnet 4"},
             "claude-haiku-4-5": {"name": "Claude Haiku 4.5"},
             "claude-3-5-haiku": {"name": "Claude 3.5 Haiku"},
-            # Other models via OpenCode Zen
+        },
+    },
+    # OpenCode Zen - OpenAI-compatible models (chat/completions API)
+    "opencode-zen": {
+        "type": "openai",
+        "base_url": "https://opencode.ai/zen/v1",
+        "models": {
+            # GPT models
+            "gpt-5.2": {"name": "GPT 5.2"},
+            "gpt-5.2-codex": {"name": "GPT 5.2 Codex"},
+            "gpt-5.1": {"name": "GPT 5.1"},
+            "gpt-5.1-codex": {"name": "GPT 5.1 Codex"},
+            "gpt-5.1-codex-max": {"name": "GPT 5.1 Codex Max"},
+            "gpt-5.1-codex-mini": {"name": "GPT 5.1 Codex Mini"},
+            "gpt-5": {"name": "GPT 5"},
+            "gpt-5-codex": {"name": "GPT 5 Codex"},
+            "gpt-5-nano": {"name": "GPT 5 Nano (Free)"},
+            # Other OpenAI-compatible models
             "minimax-m2.1": {"name": "MiniMax M2.1"},
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.6": {"name": "GLM 4.6"},
             "kimi-k2.5": {"name": "Kimi K2.5"},
             "kimi-k2-thinking": {"name": "Kimi K2 Thinking"},
             "kimi-k2": {"name": "Kimi K2"},
-            "glm-4.7": {"name": "GLM 4.7"},
-            "glm-4.6": {"name": "GLM 4.6"},
             "qwen3-coder": {"name": "Qwen3 Coder 480B"},
             "big-pickle": {"name": "Big Pickle (Free)"},
+            # Gemini models (also via OpenAI-compatible)
+            "gemini-3-pro": {"name": "Gemini 3 Pro"},
+            "gemini-3-flash": {"name": "Gemini 3 Flash"},
+        },
+    },
+    # Legacy alias for backwards compatibility
+    "opencode": {
+        "type": "openai",
+        "base_url": "https://opencode.ai/zen/v1",
+        "models": {
+            # Same as opencode-zen for backwards compatibility
+            "big-pickle": {"name": "Big Pickle (Free)"},
+            "minimax-m2.1": {"name": "MiniMax M2.1"},
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.6": {"name": "GLM 4.6"},
+            "kimi-k2.5": {"name": "Kimi K2.5"},
+            "kimi-k2-thinking": {"name": "Kimi K2 Thinking"},
+            "kimi-k2": {"name": "Kimi K2"},
+            "qwen3-coder": {"name": "Qwen3 Coder 480B"},
         },
     },
 }
