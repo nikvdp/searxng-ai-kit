@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,6 +38,9 @@ def configure_logging():
 
 # Configure logging early
 configure_logging()
+
+# Logger for CLI Proxy API operations
+cli_proxy_log = logging.getLogger("searxng.cli_proxy_api")
 
 # Import vendored SearXNG modules
 import searx
@@ -112,7 +116,7 @@ COMMON_ENGINES = [
 
 
 # Sessions management sub-app
-sessions_app = typer.Typer(help="Manage chat sessions")
+sessions_app = typer.Typer(help="Manage chat sessions", no_args_is_help=True)
 
 
 @sessions_app.command("list")
@@ -201,8 +205,12 @@ def sessions_show(
 @sessions_app.command("rm")
 def sessions_rm(
     session_id: str = typer.Argument(..., help="Session ID or unique prefix"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm deletion without prompt"),
-    keep_transcript: bool = typer.Option(False, "--keep-transcript", help="Do not delete transcript file"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Confirm deletion without prompt"
+    ),
+    keep_transcript: bool = typer.Option(
+        False, "--keep-transcript", help="Do not delete transcript file"
+    ),
 ):
     """Remove a session JSON (and transcript unless kept)."""
     try:
@@ -220,13 +228,25 @@ def sessions_rm(
 
 
 app.add_typer(sessions_app, name="sessions")
-# Profile management for API keys and configurations
-class ProfileManager:
-    """Manages user profiles for API keys and configurations."""
+
+
+# Model registry for AI model configurations
+class ModelManager:
+    """Manages AI model configurations in models.toml.
+
+    Schema:
+    - [models.<name>] entries with:
+        - type: LiteLLM protocol prefix (openai/anthropic/gemini/etc)
+        - model_id: upstream model identifier
+        - base_url: optional API base URL
+        - api_key: optional API key
+        - metadata: optional table (e.g. source="opencode")
+    - [settings] default_model = "<name>"
+    """
 
     def __init__(self):
         self.config_dir = self._get_config_dir()
-        self.profiles_file = self.config_dir / "profiles.toml"
+        self.models_file = self.config_dir / "models.toml"
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_config_dir(self) -> Path:
@@ -241,244 +261,195 @@ class ProfileManager:
             )
         return Path(config_home) / "searxng"
 
-    def _get_default_model(self, provider_type: str) -> str:
-        """Get default model for each provider type."""
-        defaults = {
-            "openrouter": "openrouter/openai/gpt-5",
-            "anthropic": "anthropic/claude-3-5-sonnet-20241022",
-            "openai": "openai/gpt-5",
-            "google": "gemini/gemini-2.0-flash-exp",
-        }
-        return defaults.get(provider_type, "openai/gpt-5")
-
-    def _get_default_base_url(self, provider_type: str) -> Optional[str]:
-        """Get default base URL for each provider type."""
-        defaults = {
-            "openrouter": "https://openrouter.ai/api/v1",
-            "anthropic": None,  # Use LiteLLM default
-            "openai": None,  # Use LiteLLM default
-            "google": None,  # Use LiteLLM default
-        }
-        return defaults.get(provider_type)
-
-    def _load_profiles(self) -> Dict[str, Any]:
-        """Load profiles from TOML file."""
-        if not self.profiles_file.exists():
-            return {"profiles": {}, "settings": {}}
+    def _load_models(self) -> Dict[str, Any]:
+        """Load models from TOML file."""
+        if not self.models_file.exists():
+            return {"models": {}, "settings": {}}
 
         try:
-            with open(self.profiles_file, "rb") as f:
+            with open(self.models_file, "rb") as f:
                 return tomllib.load(f)
         except Exception as e:
-            console.print(f"[red]Error loading profiles: {e}[/red]")
-            return {"profiles": {}, "settings": {}}
+            console.print(f"[red]Error loading models: {e}[/red]")
+            return {"models": {}, "settings": {}}
 
-    def _save_profiles(self, data: Dict[str, Any]):
-        """Save profiles to TOML file."""
+    def _save_models(self, data: Dict[str, Any]):
+        """Save models to TOML file."""
         import toml
 
         try:
-            with open(self.profiles_file, "w") as f:
+            with open(self.models_file, "w") as f:
                 toml.dump(data, f)
-            # Set restrictive permissions
-            os.chmod(self.profiles_file, 0o600)
+            # Set restrictive permissions (contains API keys)
+            os.chmod(self.models_file, 0o600)
         except Exception as e:
-            console.print(f"[red]Error saving profiles: {e}[/red]")
+            console.print(f"[red]Error saving models: {e}[/red]")
             raise typer.Exit(1)
 
-    def add_profile(
+    def add_model(
         self,
         name: str,
-        provider_type: str,
-        api_key: str,
+        model_type: str,
+        model_id: str,
         base_url: Optional[str] = None,
-        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         force: bool = False,
     ):
-        """Add a new profile."""
-        data = self._load_profiles()
+        """Add a new model to the registry."""
+        data = self._load_models()
 
-        # Check if profile exists
-        if name in data["profiles"] and not force:
-            if not typer.confirm(f"Profile '{name}' already exists. Overwrite?"):
-                console.print("[yellow]Profile not added.[/yellow]")
+        # Check if model exists
+        if name in data["models"] and not force:
+            if not typer.confirm(f"Model '{name}' already exists. Overwrite?"):
+                console.print("[yellow]Model not added.[/yellow]")
                 return
 
-        # Set defaults
-        if not base_url:
-            base_url = self._get_default_base_url(provider_type)
-        if not model:
-            model = self._get_default_model(provider_type)
-
-        # Create profile
-        profile = {
-            "type": provider_type,
-            "api_key": api_key,
-            "default_model": model,
+        # Create model entry
+        model = {
+            "type": model_type,
+            "model_id": model_id,
         }
         if base_url:
-            profile["base_url"] = base_url
+            model["base_url"] = base_url
+        if api_key:
+            model["api_key"] = api_key
+        if metadata:
+            # Flatten metadata to top-level fields
+            if "source" in metadata:
+                model["source"] = metadata["source"]
+            if "display_name" in metadata:
+                model["display_name"] = metadata["display_name"]
+            # Any other metadata fields get added directly
+            for key, value in metadata.items():
+                if key not in ("source", "display_name") and key not in model:
+                    model[key] = value
 
-        data["profiles"][name] = profile
+        data["models"][name] = model
+        self._save_models(data)
+        console.print(f"[green]Model '{name}' added successfully.[/green]")
 
-        # Set as default if it's the first profile
-        if not data["settings"].get("default_profile"):
-            data["settings"]["default_profile"] = name
+    def list_models(self) -> Dict[str, Dict[str, Any]]:
+        """List all models from registry."""
+        data = self._load_models()
+        return data.get("models", {})
 
-        self._save_profiles(data)
-        console.print(f"[green]Profile '{name}' added successfully.[/green]")
-
-        if (
-            not data["settings"].get("default_profile")
-            or data["settings"]["default_profile"] == name
-        ):
-            console.print(f"[blue]Profile '{name}' set as default.[/blue]")
-
-    def list_profiles(self):
-        """List all profiles."""
-        data = self._load_profiles()
-        if not data["profiles"]:
-            console.print("[yellow]No profiles found.[/yellow]")
-            console.print(f"[dim]Profiles are stored in: {self.profiles_file}[/dim]")
-            return
-
-        table = Table(title="SearXNG Profiles")
-        table.add_column("Name", style="cyan")
-        table.add_column("Type", style="magenta")
-        table.add_column("Model", style="green")
-        table.add_column("Base URL", style="blue")
-        table.add_column("Default", style="yellow")
-
-        default_profile = data["settings"].get("default_profile")
-        for name, profile in data["profiles"].items():
-            is_default = "✓" if name == default_profile else ""
-            base_url = profile.get("base_url", "Default")
-            table.add_row(
-                name, profile["type"], profile["default_model"], base_url, is_default
-            )
-
-        console.print(table)
-        console.print(f"[dim]Profiles stored in: {self.profiles_file}[/dim]")
-
-    def show_profile(self, name: str):
-        """Show details of a specific profile."""
-        data = self._load_profiles()
-        if name not in data["profiles"]:
-            console.print(f"[red]Profile '{name}' not found.[/red]")
+    def show_model(self, name: str):
+        """Show details of a specific model."""
+        data = self._load_models()
+        if name not in data["models"]:
+            console.print(f"[red]Model '{name}' not found.[/red]")
             raise typer.Exit(1)
 
-        profile = data["profiles"][name]
-        is_default = name == data["settings"].get("default_profile")
+        model = data["models"][name]
+        is_default = name == data["settings"].get("default_model")
 
-        console.print(f"\n[bold]Profile: {name}[/bold]")
-        console.print(f"Type: {profile['type']}")
-        console.print(f"Model: {profile['default_model']}")
-        console.print(f"Base URL: {profile.get('base_url', 'Default')}")
-        console.print(f"API Key: {profile['api_key'][:8]}...")
+        console.print(f"\n[bold]Model: {name}[/bold]")
+        console.print(f"Type: {model['type']}")
+        console.print(f"Model ID: {model['model_id']}")
+        console.print(f"Base URL: {model.get('base_url', 'Default')}")
+        if model.get("api_key"):
+            console.print(f"API Key: {model['api_key'][:8]}...")
+        else:
+            console.print("API Key: [dim]not set (using env)[/dim]")
+        if model.get("metadata"):
+            console.print(f"Metadata: {model['metadata']}")
         console.print(f"Default: {'Yes' if is_default else 'No'}")
 
-    def remove_profile(self, name: str):
-        """Remove a profile."""
-        data = self._load_profiles()
-        if name not in data["profiles"]:
-            console.print(f"[red]Profile '{name}' not found.[/red]")
+    def remove_model(self, name: str, force: bool = False):
+        """Remove a model from registry."""
+        data = self._load_models()
+        if name not in data["models"]:
+            console.print(f"[red]Model '{name}' not found.[/red]")
             raise typer.Exit(1)
 
-        if not typer.confirm(f"Remove profile '{name}'?"):
-            console.print("[yellow]Profile not removed.[/yellow]")
+        if not force and not typer.confirm(f"Remove model '{name}'?"):
+            console.print("[yellow]Model not removed.[/yellow]")
             return
 
-        del data["profiles"][name]
+        del data["models"][name]
+        self._save_models(data)
+        console.print(f"[green]Model '{name}' removed.[/green]")
 
-        # Clear default if removing default profile
-        if data["settings"].get("default_profile") == name:
-            data["settings"]["default_profile"] = None
-            # Set new default if profiles remain
-            if data["profiles"]:
-                new_default = next(iter(data["profiles"]))
-                data["settings"]["default_profile"] = new_default
-                console.print(
-                    f"[blue]Profile '{new_default}' set as new default.[/blue]"
-                )
+        # Warn if this was the global default
+        if global_config.get_default_model() == name:
+            console.print(
+                f"[yellow]Note: This was the default model. Set a new default with 'searxng models set-default <name>'[/yellow]"
+            )
 
-        self._save_profiles(data)
-        console.print(f"[green]Profile '{name}' removed.[/green]")
+    def get_default_model_name(self) -> Optional[str]:
+        """Get the name of the default model."""
+        data = self._load_models()
+        return data["settings"].get("default_model")
 
-    def set_default(self, name: str):
-        """Set default profile."""
-        data = self._load_profiles()
-        if name not in data["profiles"]:
-            console.print(f"[red]Profile '{name}' not found.[/red]")
+    def get_model(self, name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get model by name or default model."""
+        data = self._load_models()
+
+        if name:
+            model = data["models"].get(name)
+            if model:
+                return {"name": name, **model}
+            return None
+        else:
+            default_name = data["settings"].get("default_model")
+            if default_name:
+                model = data["models"].get(default_name)
+                if model:
+                    return {"name": default_name, **model}
+
+        return None
+
+    def test_model(self, name: str):
+        """Test a model by making a simple API call."""
+        data = self._load_models()
+        if name not in data["models"]:
+            console.print(f"[red]Model '{name}' not found.[/red]")
             raise typer.Exit(1)
 
-        data["settings"]["default_profile"] = name
-        self._save_profiles(data)
-        console.print(f"[green]Profile '{name}' set as default.[/green]")
+        model = data["models"][name]
 
-    def edit_profile(self, name: str):
-        """Edit a profile using system editor."""
-        data = self._load_profiles()
-        if name not in data["profiles"]:
-            console.print(f"[red]Profile '{name}' not found.[/red]")
-            raise typer.Exit(1)
-
-        editor = os.environ.get(
-            "EDITOR", "nano" if platform.system() != "Windows" else "notepad"
-        )
-        try:
-            subprocess.run([editor, str(self.profiles_file)])
-            console.print(f"[green]Profile file opened in {editor}.[/green]")
-        except Exception as e:
-            console.print(f"[red]Error opening editor: {e}[/red]")
-            raise typer.Exit(1)
-
-    def test_profile(self, name: str):
-        """Test a profile by making a simple API call."""
-        data = self._load_profiles()
-        if name not in data["profiles"]:
-            console.print(f"[red]Profile '{name}' not found.[/red]")
-            raise typer.Exit(1)
-
-        profile = data["profiles"][name]
-
-        # Test with a simple query
-        console.print(f"[blue]Testing profile '{name}'...[/blue]")
+        console.print(f"[blue]Testing model '{name}'...[/blue]")
 
         # Set environment variables temporarily
         old_env = {}
         try:
-            # Map provider types to environment variables
+            # Map model types to environment variables
             env_map = {
                 "openrouter": "OPENROUTER_API_KEY",
                 "anthropic": "ANTHROPIC_API_KEY",
                 "openai": "OPENAI_API_KEY",
-                "google": "GOOGLE_API_KEY",
+                "gemini": "GOOGLE_API_KEY",
             }
 
-            env_key = env_map.get(profile["type"])
-            if env_key:
-                old_env[env_key] = os.environ.get(env_key)
-                os.environ[env_key] = profile["api_key"]
+            if model.get("api_key"):
+                env_key = env_map.get(model["type"])
+                if env_key:
+                    old_env[env_key] = os.environ.get(env_key)
+                    os.environ[env_key] = model["api_key"]
 
-            if profile.get("base_url"):
+            if model.get("base_url"):
                 old_env["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL")
-                os.environ["OPENAI_BASE_URL"] = profile["base_url"]
+                os.environ["OPENAI_BASE_URL"] = model["base_url"]
+
+            # Build litellm model string
+            litellm_model = f"{model['type']}/{model['model_id']}"
 
             # Make test call
             import litellm
 
             response = litellm.completion(
-                model=profile["default_model"],
+                model=litellm_model,
                 messages=[{"role": "user", "content": "Hello"}],
                 max_tokens=5,
             )
 
-            console.print(f"[green]✓ Profile '{name}' is working![/green]")
-            console.print(f"Model: {profile['default_model']}")
+            console.print(f"[green]✓ Model '{name}' is working![/green]")
+            console.print(f"LiteLLM model: {litellm_model}")
             console.print(f"Response: {response.choices[0].message.content}")
 
         except Exception as e:
-            console.print(f"[red]✗ Profile '{name}' test failed: {e}[/red]")
+            console.print(f"[red]✗ Model '{name}' test failed: {e}[/red]")
         finally:
             # Restore environment
             for key, value in old_env.items():
@@ -487,22 +458,602 @@ class ProfileManager:
                 else:
                     os.environ[key] = value
 
-    def get_profile(self, name: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get profile by name or default profile."""
-        data = self._load_profiles()
+    def edit_models_file(self):
+        """Edit the models file using system editor."""
+        editor = os.environ.get(
+            "EDITOR", "nano" if platform.system() != "Windows" else "notepad"
+        )
+        try:
+            subprocess.run([editor, str(self.models_file)])
+            console.print(f"[green]Models file opened in {editor}.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error opening editor: {e}[/red]")
+            raise typer.Exit(1)
 
-        if name:
-            return data["profiles"].get(name)
+
+# Global model manager instance
+model_manager = ModelManager()
+
+
+class GlobalConfig:
+    """Global configuration for SearXNG CLI."""
+
+    def __init__(self):
+        self.config_dir = model_manager.config_dir  # Reuse same config dir
+        self.config_file = self.config_dir / "config.toml"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self._config_data = self._load_config()
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from TOML file."""
+        if not self.config_file.exists():
+            return {}
+
+        try:
+            with open(self.config_file, "rb") as f:
+                return tomllib.load(f)
+        except Exception:
+            return {}
+
+    def _save_config(self, data: Dict[str, Any]):
+        """Save configuration to TOML file."""
+        try:
+            import toml
+
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                toml.dump(data, f)
+            self._config_data = data
+        except Exception as e:
+            console.print(f"[red]Error saving config: {e}[/red]")
+
+    def get_default_model(self) -> Optional[str]:
+        """Get the global default model."""
+        return self._config_data.get("default_model")
+
+    def set_default_model(self, model: Optional[str]):
+        """Set the global default model."""
+        # Reload config to get latest (may have been modified by CLIProxyAPIConfig)
+        data = self._load_config()
+        if model:
+            data["default_model"] = model
         else:
-            default_name = data["settings"].get("default_profile")
-            if default_name:
-                return data["profiles"].get(default_name)
+            data.pop("default_model", None)
+        self._save_config(data)
+
+
+# Global config instance
+global_config = GlobalConfig()
+
+
+# --------------------
+# CLI Proxy API Config
+# --------------------
+class CLIProxyAPIConfig:
+    """Manages CLI Proxy API configuration for searxng integration.
+
+    Configuration is stored in ~/.config/searxng/config.toml under [cli-proxy-api] section.
+    """
+
+    def __init__(self, config_dir: Optional[Path] = None):
+        self.config_dir = config_dir or model_manager.config_dir
+        self.config_file = self.config_dir / "config.toml"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Process management state
+        self.process: Optional[subprocess.Popen] = None
+        self.port: Optional[int] = None
+        self.temp_config_path: Optional[Path] = None
+        self._started = False
+        self._restart_count = 0
+        self._max_restarts = 3
+        self._start_time: Optional[float] = None
+        self._lock_file: Optional[Path] = None
+        self._models_cache: List[str] = []
+        self._models_cache_time: float = 0
+
+    def _get_section(self) -> Dict[str, Any]:
+        """Get the cli-proxy-api section from config."""
+        config = self._load_config()
+        return config.get("cli-proxy-api", {})
+
+    def _save_section(self, section_data: Dict[str, Any]):
+        """Save the cli-proxy-api section, preserving other sections."""
+        config = self._load_config()
+        config["cli-proxy-api"] = section_data
+        self._save_config(config)
+
+    def is_enabled(self) -> bool:
+        """Check if CLI Proxy API integration is enabled."""
+        return self._get_section().get("enabled", False)
+
+    def set_enabled(self, enabled: bool):
+        """Enable or disable CLI Proxy API integration."""
+        section = self._get_section()
+        section["enabled"] = enabled
+        self._save_section(section)
+
+    def get_config_path(self) -> Optional[str]:
+        """Get the configured cli-proxy-api config path."""
+        return self._get_section().get("config-path")
+
+    def set_config_path(self, path: Optional[str]):
+        """Set the cli-proxy-api config path."""
+        section = self._get_section()
+        if path:
+            section["config-path"] = path
+        else:
+            section.pop("config-path", None)
+        self._save_section(section)
+
+    def get_default_model(self) -> Optional[str]:
+        """Get the default model for cli-proxy-api."""
+        return self._get_section().get("default-model")
+
+    def set_default_model(self, model: Optional[str]):
+        """Set the default model for cli-proxy-api."""
+        section = self._get_section()
+        if model:
+            section["default-model"] = model
+        else:
+            section.pop("default-model", None)
+        self._save_section(section)
+
+    def is_cli_proxy_available(self) -> bool:
+        """Check if cli-proxy-api binary is available on PATH."""
+        import shutil
+
+        return shutil.which("cli-proxy-api") is not None
+
+    def find_cli_proxy_config(self) -> Optional[Path]:
+        """Find cli-proxy-api config file.
+
+        Priority:
+        1. Explicitly configured path
+        2. Common locations (~/.config/cli-proxy-api/config.yaml, etc.)
+        """
+        # Check explicit config path first
+        explicit_path = self.get_config_path()
+        if explicit_path:
+            p = Path(explicit_path).expanduser()
+            if p.exists():
+                return p
+
+        # Check common locations
+        common_paths = [
+            Path.home() / ".config" / "cli-proxy-api" / "config.yaml",
+            Path.home() / ".cli-proxy-api" / "config.yaml",
+            Path.home() / "tmp" / "CLIProxyAPI" / "config.yaml",
+            Path("/etc/cli-proxy-api/config.yaml"),
+        ]
+
+        for path in common_paths:
+            if path.exists():
+                return path
 
         return None
 
+    def get_status(self) -> Dict[str, Any]:
+        """Get comprehensive status information."""
+        config_path = self.find_cli_proxy_config()
+        return {
+            "enabled": self.is_enabled(),
+            "binary_available": self.is_cli_proxy_available(),
+            "config_found": config_path is not None,
+            "config_path": str(config_path) if config_path else None,
+            "explicit_config_path": self.get_config_path(),
+            "default_model": self.get_default_model(),
+            "process_running": self.is_running(),
+            "port": self.port,
+        }
 
-# Global profile manager instance
-profile_manager = ProfileManager()
+    def _acquire_lock(self) -> bool:
+        """Acquire a file lock to prevent concurrent starts."""
+        lock_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "searxng"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        self._lock_file = lock_dir / "cli-proxy-api.lock"
+
+        try:
+            # Try to create lock file exclusively
+            fd = os.open(
+                str(self._lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+            )
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            # Lock exists, check if process is still alive
+            try:
+                with open(self._lock_file, "r") as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, 0)  # Check if process exists
+                return False  # Process still running
+            except (ValueError, ProcessLookupError, PermissionError):
+                # Stale lock, remove and retry
+                try:
+                    self._lock_file.unlink()
+                    return self._acquire_lock()
+                except Exception:
+                    return False
+        except Exception:
+            return False
+
+    def _release_lock(self):
+        """Release the file lock."""
+        if self._lock_file and self._lock_file.exists():
+            try:
+                self._lock_file.unlink()
+            except Exception:
+                pass
+        self._lock_file = None
+
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        import signal
+        import atexit
+
+        def cleanup():
+            self.stop()
+
+        atexit.register(cleanup)
+
+        # Handle SIGTERM gracefully
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def sigterm_handler(signum, frame):
+            self.stop()
+            if callable(original_sigterm):
+                original_sigterm(signum, frame)
+
+        try:
+            signal.signal(signal.SIGTERM, sigterm_handler)
+        except Exception:
+            pass  # May fail in non-main thread
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load config from TOML file."""
+        if not self.config_file.exists():
+            return {}
+        try:
+            with open(self.config_file, "rb") as f:
+                return tomllib.load(f)
+        except Exception as e:
+            console.print(f"[red]Error loading config: {e}[/red]")
+            return {}
+
+    def _save_config(self, data: Dict[str, Any]):
+        """Save config to TOML file."""
+        import toml
+
+        try:
+            import toml
+
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                toml.dump(data, f)
+            self._config_data = data
+        except Exception:
+            pass
+            self._lock_file = None
+
+    def _find_free_port(self) -> int:
+        """Find an available port using OS ephemeral port allocation."""
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            port = s.getsockname()[1]
+        return port
+
+    def _resolve_path(self, path: str, base_dir: Path) -> str:
+        """Resolve relative paths against base directory."""
+        if not path:
+            return path
+        p = Path(path)
+        if p.is_absolute():
+            return str(p)
+        # Handle ~ expansion
+        if path.startswith("~"):
+            return str(Path(path).expanduser())
+        # Resolve relative to base_dir
+        return str((base_dir / p).resolve())
+
+    def _create_temp_config(self, source_config: Path, port: int) -> Path:
+        """Create temporary config with modified port and security settings."""
+        import yaml
+
+        with open(source_config, "r") as f:
+            config = yaml.safe_load(f)
+
+        base_dir = source_config.parent
+
+        # Modify port and FORCE localhost binding for security
+        config["port"] = port
+        config["host"] = "127.0.0.1"  # Always force localhost
+
+        # Resolve relative paths to absolute
+        if "auth-dir" in config:
+            config["auth-dir"] = self._resolve_path(config["auth-dir"], base_dir)
+
+        # Create temp file with secure permissions
+        temp_dir = (
+            Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+            / "searxng"
+            / "cli-proxy"
+        )
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_config = temp_dir / f"config-{port}.yaml"
+
+        # Write with restrictive permissions (0600)
+        fd = os.open(str(temp_config), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(config, f)
+
+        return temp_config
+
+    def start(self, source_config: Optional[Path] = None) -> bool:
+        """Start cli-proxy-api subprocess.
+
+        Args:
+            source_config: Path to cli-proxy-api config. If None, auto-detects.
+
+        Returns:
+            True if started successfully, False otherwise.
+        """
+        import time
+
+        if self._started and self.is_running():
+            return True
+
+        # Auto-detect config if not provided
+        if source_config is None:
+            source_config = cli_proxy_config.find_cli_proxy_config()
+            if source_config is None:
+                return False
+
+        # Acquire lock to prevent concurrent starts
+        if not self._acquire_lock():
+            # Another instance may be starting, wait and check
+            time.sleep(1)
+            return False
+
+        try:
+            # Find free port using ephemeral allocation
+            self.port = self._find_free_port()
+            cli_proxy_log.debug(f"Starting cli-proxy-api on port {self.port}")
+
+            # Create temp config with our port
+            self.temp_config_path = self._create_temp_config(source_config, self.port)
+            cli_proxy_log.debug(f"Created temp config at {self.temp_config_path}")
+
+            # Set up signal handlers before starting process
+            self._setup_signal_handlers()
+
+            # Start subprocess
+            # Set NO_PROXY to ensure localhost calls don't go through HTTP proxy
+            env = os.environ.copy()
+            no_proxy = env.get("NO_PROXY", "")
+            if no_proxy:
+                env["NO_PROXY"] = f"{no_proxy},127.0.0.1,localhost"
+            else:
+                env["NO_PROXY"] = "127.0.0.1,localhost"
+
+            self.process = subprocess.Popen(
+                ["cli-proxy-api", "-config", str(self.temp_config_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+        except FileNotFoundError:
+            cli_proxy_log.error("cli-proxy-api binary not found on PATH")
+            self._release_lock()
+            return False
+        except Exception as e:
+            cli_proxy_log.error(f"Failed to start cli-proxy-api: {e}")
+            self._release_lock()
+            raise
+
+        # Wait for server to be ready
+        if not self._wait_for_ready(timeout=15):
+            cli_proxy_log.error(
+                f"cli-proxy-api failed to start (timeout waiting for server on port {self.port})"
+            )
+            self.stop()
+            return False
+
+        self._started = True
+        self._restart_count = 0
+        self._start_time = time.time()  # Track when proxy started for retry logic
+        cli_proxy_log.info(f"cli-proxy-api started successfully on port {self.port}")
+        return True
+
+    def _wait_for_ready(self, timeout: int = 15) -> bool:
+        """Wait for cli-proxy-api to be ready with exponential backoff.
+
+        Checks both server availability AND that auth/models are loaded,
+        since CLI Proxy API needs time to load auth files after startup.
+        """
+        import time
+
+        start = time.time()
+        base_url = f"http://127.0.0.1:{self.port}"
+        delay = 0.1
+        server_up = False
+
+        while time.time() - start < timeout:
+            # Check if process died
+            if self.process and self.process.poll() is not None:
+                return False  # Process exited
+
+            try:
+                if not server_up:
+                    # First, check if server is responding at all
+                    resp = httpx.get(base_url, timeout=2)
+                    if resp.status_code == 200:
+                        server_up = True
+                        cli_proxy_log.debug("Server responding, checking for models...")
+
+                if server_up:
+                    # Server is up, now check if models are loaded
+                    # This ensures auth files have been processed
+                    models_resp = httpx.get(f"{base_url}/v1/models", timeout=2)
+                    if models_resp.status_code == 200:
+                        data = models_resp.json()
+                        models = data.get("data", [])
+                        if models:
+                            cli_proxy_log.debug(
+                                f"Models loaded: {len(models)} available"
+                            )
+                            return True
+                        # Server up but no models yet, keep waiting
+                        cli_proxy_log.debug("Server up but no models yet, waiting...")
+            except httpx.ConnectError:
+                pass  # Not ready yet
+            except Exception:
+                pass
+
+            time.sleep(delay)
+            delay = min(delay * 1.5, 2.0)  # Exponential backoff, max 2s
+
+        return False
+
+    def is_running(self) -> bool:
+        """Check if subprocess is still running."""
+        if self.process is None:
+            return False
+        return self.process.poll() is None
+
+    def get_base_url(self) -> Optional[str]:
+        """Get base URL for API requests (WITHOUT /v1 - litellm adds it)."""
+        if not self._started or self.port is None:
+            return None
+        return f"http://127.0.0.1:{self.port}"
+
+    def stop(self):
+        """Stop subprocess and cleanup."""
+        if self.process is not None:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                try:
+                    self.process.wait(timeout=2)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self.process = None
+
+        # Cleanup temp config
+        if self.temp_config_path and self.temp_config_path.exists():
+            try:
+                self.temp_config_path.unlink()
+            except Exception:
+                pass
+            self.temp_config_path = None
+
+        self._release_lock()
+        self._started = False
+        self.port = None
+
+    def restart(self, source_config: Optional[Path] = None) -> bool:
+        """Restart the subprocess with backoff protection.
+
+        Args:
+            source_config: Path to cli-proxy-api config. If None, auto-detects.
+
+        Returns:
+            True if restarted successfully, False otherwise.
+        """
+        import time
+
+        if self._restart_count >= self._max_restarts:
+            cli_proxy_log.error(
+                f"cli-proxy-api max restarts ({self._max_restarts}) exceeded"
+            )
+            return False
+
+        self._restart_count += 1
+        cli_proxy_log.warning(
+            f"cli-proxy-api process died, attempting restart {self._restart_count}/{self._max_restarts}"
+        )
+        # Exponential backoff between restarts
+        backoff = min(2**self._restart_count, 30)
+        cli_proxy_log.debug(f"Waiting {backoff}s before restart")
+        time.sleep(backoff)
+
+        self.stop()
+        return self.start(source_config)
+
+    def ensure_running(self, source_config: Optional[Path] = None) -> bool:
+        """Ensure proxy is running, starting if necessary.
+
+        Args:
+            source_config: Path to cli-proxy-api config. If None, auto-detects.
+
+        Returns:
+            True if running, False if failed to start.
+        """
+        if self.is_running():
+            return True
+        return self.start(source_config)
+
+    def get_models(self, force_refresh: bool = False) -> List[str]:
+        """Fetch available models from cli-proxy-api.
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh data.
+
+        Returns:
+            List of model IDs available from the proxy.
+        """
+        import time
+
+        if not self.is_running():
+            return []
+
+        # Check cache (5 minute TTL)
+        if not force_refresh and self._models_cache:
+            cache_age = time.time() - self._models_cache_time
+            if cache_age < 300:  # 5 minutes
+                return self._models_cache
+
+        try:
+            url = f"http://127.0.0.1:{self.port}/v1/models"
+            resp = httpx.get(url, timeout=5)
+            if resp.status_code != 200:
+                return []
+
+            data = resp.json()
+            # OpenAI format: {"data": [{"id": "model-name", ...}, ...]}
+            models = []
+            for model in data.get("data", []):
+                model_id = model.get("id")
+                if model_id:
+                    models.append(model_id)
+
+            # Cache results
+            self._models_cache = models
+            self._models_cache_time = time.time()
+            return models
+        except Exception:
+            return []
+
+    def get_prefixed_models(self, force_refresh: bool = False) -> List[str]:
+        """Get models with cli-proxy-api/ prefix for litellm routing.
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh data.
+
+        Returns:
+            List of model IDs prefixed with 'cli-proxy-api/'.
+        """
+        return [f"cli-proxy-api/{m}" for m in self.get_models(force_refresh)]
+
+
+# CLI Proxy API config instance
+cli_proxy_config = CLIProxyAPIConfig()
 
 
 # --------------------
@@ -515,7 +1066,7 @@ class SessionStore:
     """
 
     def __init__(self, base_config_dir: Optional[Path] = None):
-        self.base_config_dir = base_config_dir or profile_manager.config_dir
+        self.base_config_dir = base_config_dir or model_manager.config_dir
         self.sessions_dir = self.base_config_dir / "sessions"
 
     def _ensure_dir(self) -> None:
@@ -533,7 +1084,7 @@ class SessionStore:
         self,
         model: str,
         base_url: Optional[str],
-        profile: Optional[str],
+        model_name: Optional[str] = None,
         markdown_path: Optional[str] = None,
         initial_messages: Optional[List[Dict[str, str]]] = None,
         title: Optional[str] = None,
@@ -546,7 +1097,7 @@ class SessionStore:
             "updated_at": now,
             "model": model,
             "base_url": base_url,
-            "profile": profile,
+            "model_name": model_name,
             "title": title or "",
             "markdown_path": markdown_path,
             "messages": initial_messages or [],
@@ -579,7 +1130,11 @@ class SessionStore:
     def append_message(
         self, session: Dict[str, Any], role: str, content: str, **extra: Any
     ) -> Dict[str, Any]:
-        msg: Dict[str, Any] = {"role": role, "content": content, "ts": datetime.utcnow().isoformat()}
+        msg: Dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "ts": datetime.utcnow().isoformat(),
+        }
         msg.update({k: v for k, v in extra.items() if v is not None})
         session.setdefault("messages", []).append(msg)
         # Auto-title based on the first user message if not set
@@ -620,7 +1175,10 @@ class SessionStore:
         # Title
         if not s.get("title"):
             try:
-                first_user = next((m for m in msgs if m.get("role") == "user" and m.get("content")), None)
+                first_user = next(
+                    (m for m in msgs if m.get("role") == "user" and m.get("content")),
+                    None,
+                )
                 if first_user:
                     pv = str(first_user.get("content", "")).strip().splitlines()[0]
                     s["title"] = pv[:80] if pv else ""
@@ -629,7 +1187,9 @@ class SessionStore:
         # updated_at fallback
         if not s.get("updated_at"):
             try:
-                last_ts = next((m.get("ts") for m in reversed(msgs) if m.get("ts")), None)
+                last_ts = next(
+                    (m.get("ts") for m in reversed(msgs) if m.get("ts")), None
+                )
                 if last_ts:
                     s["updated_at"] = last_ts
             except Exception:
@@ -701,7 +1261,8 @@ class SessionStore:
             if len(exact_prefix) == 1:
                 return exact_prefix[0]
             raise ValueError(
-                "Ambiguous session prefix; matches: " + ", ".join(m[:8] for m in matches[:5])
+                "Ambiguous session prefix; matches: "
+                + ", ".join(m[:8] for m in matches[:5])
             )
         return matches[0]
 
@@ -730,13 +1291,69 @@ class SessionStore:
 session_store = SessionStore()
 
 
+def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
+    """Initialize config for cli-proxy-api models.
+
+    Args:
+        model: Model string starting with 'cli-proxy-api/'
+
+    Returns:
+        Tuple of (litellm_model, base_url, api_key)
+
+    Raises:
+        ValueError: If cli-proxy-api is unavailable or fails to start
+    """
+    # Ensure cli-proxy-api is available
+    if not cli_proxy_config.is_cli_proxy_available():
+        raise ValueError(
+            "cli-proxy-api binary not found on PATH. "
+            "Install from: https://github.com/router-for-me/CLIProxyAPI"
+        )
+
+    # Find config
+    config_path = cli_proxy_config.find_cli_proxy_config()
+    if not config_path:
+        raise ValueError(
+            "No cli-proxy-api config found. "
+            "Set one with: searxng cli-proxy-api set-config /path/to/config.yaml"
+        )
+
+    # Start/get manager
+    manager = cli_proxy_config
+    if not manager.ensure_running(config_path):
+        # Check if process is still running (might be waiting for OAuth)
+        if manager.is_running():
+            raise ValueError(
+                "cli-proxy-api started but not responding. "
+                "It may be waiting for OAuth authentication. "
+                f"Run 'cli-proxy-api -config {config_path}' manually to complete OAuth setup."
+            )
+        raise ValueError(
+            "Failed to start cli-proxy-api. "
+            "Check the config file and try: searxng cli-proxy-api start"
+        )
+
+    # Extract actual model name (remove prefix)
+    # Handle models that may contain / like "moonshotai/kimi-k2:free"
+    actual_model = model[len("cli-proxy-api/") :]
+
+    # All CLI Proxy API models use anthropic protocol by default
+    # This avoids bugs in CLI Proxy API's OpenAI translation layer
+    # Users can manually add openai variants in models.toml if needed
+    litellm_model = f"anthropic/{actual_model}"
+    base_url = manager.get_base_url()
+
+    # Return dummy api_key - proxy handles actual auth
+    return litellm_model, base_url, "cli-proxy-api-managed"
+
+
 def initialize_ai_config(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
-    profile: Optional[str] = None,
-) -> Tuple[str, Optional[str]]:
+    model_name: Optional[str] = None,
+) -> Tuple[str, Optional[str], Optional[str], str]:
     """
-    Initialize AI configuration from profiles and environment.
+    Initialize AI configuration from model registry, CLI Proxy API, and environment.
 
     This is the single source of truth for AI configuration across:
     - CLI commands (ask, chat)
@@ -744,51 +1361,98 @@ def initialize_ai_config(
     - Library interface
 
     Args:
-        model: Explicit model override
+        model: Explicit LiteLLM model string override (e.g. "openai/gpt-5")
         base_url: Explicit base URL override
-        profile: Specific profile name to use (None = use default)
+        model_name: Model registry name to use (None = use default from registry)
 
     Returns:
-        Tuple of (model, base_url) configured and ready to use
+        Tuple of (model, base_url, api_key, display_name) configured and ready to use.
+        api_key is None for standard providers (uses env vars), or a dummy
+        key for cli-proxy-api models.
+        display_name is the user-friendly name (registry name or model string).
     """
     import os
 
-    # Load profile configuration
-    profile_config = None
-    if profile:
-        profile_config = profile_manager.get_profile(profile)
-        if not profile_config:
-            raise ValueError(f"Profile '{profile}' not found")
-    elif not model and not base_url:
-        # No explicit overrides, try default profile
-        profile_config = profile_manager.get_profile()  # Gets default profile
+    # Track display name for user output
+    display_name = None
 
-    # Apply profile configuration if available
-    if profile_config:
-        # Set model from profile if not explicitly provided
+    # Check if model is a cli-proxy-api model (explicit override)
+    if model and model.startswith("cli-proxy-api/"):
+        m, b, k = _initialize_cli_proxy_config(model)
+        return m, b, k, model  # display_name is the cli-proxy-api model string
+
+    # If model_name is explicitly provided, prioritize it over all defaults
+    # Load model configuration from registry
+    model_config = None
+    if model_name:
+        model_config = model_manager.get_model(model_name)
+        if not model_config:
+            raise ValueError(f"Model '{model_name}' not found in registry")
+        display_name = model_name
+
+    # Check if --model is a registry name (not just a raw LiteLLM string)
+    # This allows users to use `--model "opencode/glm-4.7"` with registry names
+    if model and not model_config:
+        registry_model = model_manager.get_model(model)
+        if registry_model:
+            model_config = registry_model
+            display_name = model
+            model = None  # Clear so it gets built from config below
+
+    # Only use defaults if model_name was not explicitly provided and model not found in registry
+    if not model_config:
+        # If no model specified, check for global default model first
         if not model:
-            model = profile_config.get("default_model")
+            global_default = global_config.get_default_model()
+            if global_default:
+                # Check if global default is a cli-proxy-api model
+                if global_default.startswith("cli-proxy-api/"):
+                    m, b, k = _initialize_cli_proxy_config(global_default)
+                    return m, b, k, global_default
+                # Otherwise treat it as a registry name and look it up
+                model_config = model_manager.get_model(global_default)
+                if model_config:
+                    display_name = global_default
+                else:
+                    # Not in registry - use as literal model string
+                    model = global_default
+                    display_name = global_default
 
-        # Set base_url from profile if not explicitly provided
-        if not base_url and profile_config.get("base_url"):
-            base_url = profile_config["base_url"]
+        # If still no model specified, check for cli-proxy-api default model
+        if not model and not model_config and cli_proxy_config.is_enabled():
+            default_model = cli_proxy_config.get_default_model()
+            if default_model:
+                full_name = f"cli-proxy-api/{default_model}"
+                m, b, k = _initialize_cli_proxy_config(full_name)
+                return m, b, k, full_name
 
-        # Set API key environment variable based on provider type
-        env_map = {
-            "openrouter": "OPENROUTER_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "google": "GOOGLE_API_KEY",
-        }
-        env_key = env_map.get(profile_config.get("type"))
-        if env_key and not os.environ.get(env_key):
-            os.environ[env_key] = profile_config["api_key"]
+    # Track api_key for returning to caller
+    api_key = None
+
+    # Apply model configuration if available
+    if model_config:
+        # Build LiteLLM model string from registry entry
+        if not model:
+            model = f"{model_config['type']}/{model_config['model_id']}"
+
+        # Set base_url from model config if not explicitly provided
+        if not base_url and model_config.get("base_url"):
+            base_url = model_config["base_url"]
+
+        # Get API key from model config if available
+        if model_config.get("api_key"):
+            api_key = model_config["api_key"]
 
     # Set default model if still not set
     if not model:
         model = "openai/gpt-5"
 
-    return model, base_url
+    # Set display_name to model if not already set
+    if not display_name:
+        display_name = model
+
+    # Return api_key if available (for registry models with custom base_url)
+    return model, base_url, api_key, display_name
 
 
 class CLISearch:
@@ -902,11 +1566,8 @@ def json_serial(obj: Any) -> Any:
 def initialize_searx():
     """Initialize SearXNG search system."""
     try:
-        settings_engines = searx.settings["engines"]
-        searx.search.load_engines(settings_engines)
-        searx.search.initialize_network(settings_engines, searx.settings["outgoing"])
-        searx.search.initialize_metrics([engine["name"] for engine in settings_engines])
-        searx.search.initialize_processors(settings_engines)
+        # Use the unified initialize() function (SearXNG API changed upstream)
+        searx.search.initialize()
         return True
     except Exception as e:
         console.print(f"[red]Error initializing SearXNG: {e}[/red]")
@@ -1625,15 +2286,15 @@ def get_mcp_tools():
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model to use (default: from profile or openai/gpt-5)",
+                        "description": "LiteLLM model string (default: from model registry or openai/gpt-5)",
                     },
                     "base_url": {
                         "type": "string",
-                        "description": "Custom API base URL (optional, overrides profile setting)",
+                        "description": "Custom API base URL (optional, overrides registry setting)",
                     },
-                    "profile": {
+                    "model_name": {
                         "type": "string",
-                        "description": "Profile name to use for API keys and config (default: uses default profile)",
+                        "description": "Model registry name to use for API keys and config (default: uses default model)",
                     },
                     "max_iterations": {
                         "type": "integer",
@@ -1719,15 +2380,15 @@ def get_mcp_tools():
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model to use (default: from profile or openai/gpt-5)",
+                        "description": "LiteLLM model string (default: from model registry or openai/gpt-5)",
                     },
                     "base_url": {
                         "type": "string",
-                        "description": "Custom API base URL (optional, overrides profile setting)",
+                        "description": "Custom API base URL (optional, overrides registry setting)",
                     },
-                    "profile": {
+                    "model_name": {
                         "type": "string",
-                        "description": "Profile name to use for API keys and config (default: uses default profile)",
+                        "description": "Model registry name to use for API keys and config (default: uses default model)",
                     },
                     "max_iterations": {
                         "type": "integer",
@@ -1740,11 +2401,50 @@ def get_mcp_tools():
     ]
 
 
+# Thinking indicator for LLM response generation
+@contextmanager
+def thinking_indicator():
+    """Show a thinking indicator during LLM calls.
+
+    TTY: animated spinner
+    Non-TTY: static "Thinking..." then "done"
+    """
+    import threading
+    import time
+
+    is_tty = sys.stderr.isatty()
+
+    if is_tty:
+        spinner_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        stop_event = threading.Event()
+
+        def animate():
+            i = 0
+            while not stop_event.is_set():
+                frame = spinner_frames[i % len(spinner_frames)]
+                print(f"\r🧠 Thinking... {frame}", end="", file=sys.stderr, flush=True)
+                i += 1
+                time.sleep(0.1)
+
+        thread = threading.Thread(target=animate, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stop_event.set()
+            thread.join(timeout=0.5)
+            print(f"\r🧠 Thinking... done", file=sys.stderr)
+    else:
+        print("🧠 Thinking...", file=sys.stderr)
+        yield
+        print("🧠 Thinking... done", file=sys.stderr)
+
+
 async def ask_ai_async(
     prompt: str,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
-    profile: Optional[str] = None,
+    model_name: Optional[str] = None,
     max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
@@ -1753,34 +2453,50 @@ async def ask_ai_async(
 
     Args:
         prompt: The question or research request
-        model: Optional model override (defaults to profile or "openai/gpt-5")
+        model: Optional LiteLLM model string override (defaults to registry or "openai/gpt-5")
         base_url: Optional base URL override
-        profile: Optional profile name to use (defaults to default profile)
+        model_name: Optional model registry name to use (defaults to default from registry)
         max_iterations: Maximum number of tool calling iterations (default: 200)
     """
     import litellm
     import os
     import sys
 
-    # Initialize configuration from profiles
-    model, base_url = initialize_ai_config(model, base_url, profile)
-
-    # Check for API keys after profile initialization
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
-    }
-
-    # Check if we have at least one API key
-    if not any(api_keys.values()):
+    # Initialize configuration from model registry or CLI Proxy API
+    try:
+        model, base_url, api_key, display_name = initialize_ai_config(
+            model, base_url, model_name
+        )
+    except ValueError as e:
+        # CLI Proxy API or model registry errors
         return {
             "success": False,
-            "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+            "error": str(e),
             "prompt": prompt,
-            "model": model,
+            "model": model or "unknown",
         }
+
+    # Print model info early (before any API calls)
+    stderr_console = Console(file=sys.stderr)
+    stderr_console.print(f"[dim]Using model: [blue]{display_name}[/blue][/dim]")
+
+    # Check for API keys after model config initialization (skip if using cli-proxy-api)
+    if api_key is None:  # Standard provider, check env vars
+        api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+            "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
+        }
+
+        # Check if we have at least one API key
+        if not any(api_keys.values()):
+            return {
+                "success": False,
+                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+                "prompt": prompt,
+                "model": model,
+            }
 
     # Define tools for the LLM
     tools = [
@@ -1897,16 +2613,24 @@ async def ask_ai_async(
             "tool_choice": "auto",
         }
 
-        # Add base_url if provided (overrides environment variable)
+        # Add api_base if provided (overrides environment variable)
+        # Note: litellm uses api_base, not base_url, for OpenAI-compatible endpoints
         if base_url:
-            completion_args["base_url"] = base_url
+            completion_args["api_base"] = base_url
+
+        # Add api_key if provided (for cli-proxy-api, pass per-call not via env)
+        if api_key:
+            completion_args["api_key"] = api_key
 
         # Make initial request to the LLM
-        response = litellm.completion(**completion_args)
+        with thinking_indicator():
+            response = litellm.completion(**completion_args)
 
         # Handle tool calls iteratively with limit
         iteration_count = 0
-        while response.choices[0].message.tool_calls and iteration_count < max_iterations:
+        while (
+            response.choices[0].message.tool_calls and iteration_count < max_iterations
+        ):
             iteration_count += 1
             # Add the assistant's message with tool calls
             messages.append(response.choices[0].message.model_dump())
@@ -1952,7 +2676,8 @@ async def ask_ai_async(
                 )
 
             # Get next response from LLM
-            response = litellm.completion(**completion_args)
+            with thinking_indicator():
+                response = litellm.completion(**completion_args)
 
         # Return the final response
         final_response = response.choices[0].message.content
@@ -2000,19 +2725,24 @@ async def handle_tool_call(name: str, arguments: dict):
         provided_session_id = arguments.get("sessionId")
         model = arguments.get("model")
         base_url = arguments.get("base_url")
-        profile = arguments.get("profile")
+        model_name = arguments.get("model_name")
         max_iterations = arguments.get("max_iterations", 200)
 
         try:
             # Initialize config early to get defaults and env set
-            resolved_model, resolved_base = initialize_ai_config(model, base_url, profile)
+            resolved_model, resolved_base, resolved_api_key, _ = initialize_ai_config(
+                model, base_url, model_name
+            )
 
             if provided_session_id:
                 session = session_store.load(provided_session_id)
                 session_id = session["session_id"]
             else:
                 session = session_store.create(
-                    model=resolved_model, base_url=resolved_base, profile=profile, title=""
+                    model=resolved_model,
+                    base_url=resolved_base,
+                    model_name=model_name,
+                    title="",
                 )
                 session_id = session["session_id"]
 
@@ -2028,7 +2758,11 @@ async def handle_tool_call(name: str, arguments: dict):
 
             # Call conversational async
             result = await ask_ai_conversational_async(
-                messages=hist, model=resolved_model, base_url=resolved_base, profile=profile, max_iterations=max_iterations
+                messages=hist,
+                model=resolved_model,
+                base_url=resolved_base,
+                model_name=model_name,
+                max_iterations=max_iterations,
             )
 
             if result.get("success"):
@@ -2117,13 +2851,13 @@ async def handle_tool_call(name: str, arguments: dict):
         if not prompt:
             return json.dumps({"error": "Prompt is required"})
 
-        model = arguments.get("model")  # Will use profile default if not specified
+        model = arguments.get("model")  # Will use registry default if not specified
         base_url = arguments.get("base_url")  # Optional custom base URL
-        profile = arguments.get("profile")  # Optional profile name
+        model_name = arguments.get("model_name")  # Optional model registry name
 
-        # Use the shared ask_ai_async function with profile support
+        # Use the shared ask_ai_async function with model registry support
         max_iterations = arguments.get("max_iterations", 200)
-        result = await ask_ai_async(prompt, model, base_url, profile, max_iterations)
+        result = await ask_ai_async(prompt, model, base_url, model_name, max_iterations)
         return json.dumps(result, indent=2, ensure_ascii=False, default=json_serial)
 
     else:
@@ -2675,7 +3409,10 @@ def ask(
         None, help="Question or research request (use '-' or omit to read from stdin)"
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m", help="Model to use (format: provider/model)"
+        None,
+        "--model",
+        "-m",
+        help="Model name from registry (e.g., 'opencode/glm-4.7') or LiteLLM string",
     ),
     format_output: str = typer.Option(
         "human", "--format", "-f", help="Output format: human or json"
@@ -2685,11 +3422,16 @@ def ask(
         "--base-url",
         help="Custom API base URL (overrides OPENAI_BASE_URL env var)",
     ),
-    profile: Optional[str] = typer.Option(
-        None, "--profile", "-p", help="Profile to use for API key and configuration"
-    ),
     max_iterations: int = typer.Option(
-        200, "--max-iterations", help="Maximum number of tool calling iterations (default: 200)"
+        200,
+        "--max-iterations",
+        help="Maximum number of tool calling iterations (default: 200)",
+    ),
+    plain_text: bool = typer.Option(
+        False,
+        "--plain-text",
+        "-p",
+        help="Disable rich markdown formatting (always plain when piping)",
     ),
 ):
     """Ask an AI assistant with web search tools (one-shot Q&A). For interactive conversations, use 'searxng chat'."""
@@ -2723,25 +3465,33 @@ def ask(
             raise typer.Exit(1)
 
     async def run_chat():
-        # Use the shared ask function with profile support
-        result = await ask_ai_async(
-            prompt=prompt, model=model, base_url=base_url, profile=profile, max_iterations=max_iterations
-        )
+        stderr_console = Console(file=sys.stderr, force_terminal=True)
 
-        # Log model info to stderr if successful
-        if result.get("success"):
-            stderr_console = Console(file=sys.stderr, force_terminal=True)
-            stderr_console.print(
-                f"[dim]Using model: [blue]{result.get('model', 'unknown')}[/blue][/dim]"
-            )
+        # Use the shared ask function with model registry support
+        # model can be a registry name or LiteLLM string - ask_ai_async handles both
+        result = await ask_ai_async(
+            prompt=prompt,
+            model=model,
+            base_url=base_url,
+            model_name=None,  # model parameter handles registry names directly now
+            max_iterations=max_iterations,
+        )
 
         if format_output.lower() == "json":
             # JSON output goes to stdout for piping
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             if result["success"]:
-                # Just the response content goes to stdout for piping
-                print(result["response"])
+                response = result["response"]
+                # Use rich markdown formatting if stdout is a tty and not disabled
+                if sys.stdout.isatty() and not plain_text:
+                    from rich.markdown import Markdown
+
+                    stdout_console = Console()
+                    stdout_console.print(Markdown(response))
+                else:
+                    # Plain text for piping or when explicitly requested
+                    print(response)
             else:
                 # Errors go to stderr
                 stderr_console.print(f"[red]Error: {result['error']}[/red]")
@@ -2755,7 +3505,8 @@ async def ask_ai_conversational_async(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
     base_url: Optional[str] = None,
-    profile: Optional[str] = None,
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
     max_iterations: int = 200,
 ) -> Dict[str, Any]:
     """
@@ -2764,33 +3515,48 @@ async def ask_ai_conversational_async(
 
     Args:
         messages: Conversation history as list of role/content dicts
-        model: Optional model override (defaults to profile or "openai/gpt-5")
+        model: Optional LiteLLM model string override (defaults to registry or "openai/gpt-5")
         base_url: Optional base URL override
-        profile: Optional profile name to use (defaults to default profile)
+        model_name: Optional model registry name to use (defaults to default from registry)
+        api_key: Optional API key (if already resolved, skip re-initialization)
         max_iterations: Maximum number of tool calling iterations (default: 200)
     """
     import litellm
     import os
 
-    # Initialize configuration from profiles
-    model, base_url = initialize_ai_config(model, base_url, profile)
+    # If api_key is already provided, skip re-initialization (caller already resolved config)
+    if api_key is None:
+        # Initialize configuration from model registry or CLI Proxy API
+        try:
+            model, base_url, api_key, _ = initialize_ai_config(
+                model, base_url, model_name
+            )
+        except ValueError as e:
+            # CLI Proxy API or model registry errors
+            return {
+                "success": False,
+                "error": str(e),
+                "model": model or "unknown",
+                "messages": messages,
+            }
 
-    # Check for API keys after profile initialization
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
-    }
-
-    # Check if we have at least one API key
-    if not any(api_keys.values()):
-        return {
-            "success": False,
-            "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
-            "model": model,
-            "messages": messages,
+    # Check for API keys after model config initialization (skip if using cli-proxy-api or custom key)
+    if api_key is None:  # Standard provider, check env vars
+        api_keys = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+            "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY"),
         }
+
+        # Check if we have at least one API key
+        if not any(api_keys.values()):
+            return {
+                "success": False,
+                "error": "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY",
+                "model": model,
+                "messages": messages,
+            }
 
     # Define tools for the LLM (same as ask function)
     tools = [
@@ -2904,16 +3670,24 @@ async def ask_ai_conversational_async(
             "tool_choice": "auto",
         }
 
-        # Add base_url if provided (overrides environment variable)
+        # Add api_base if provided (overrides environment variable)
+        # Note: litellm uses api_base, not base_url, for OpenAI-compatible endpoints
         if base_url:
-            completion_args["base_url"] = base_url
+            completion_args["api_base"] = base_url
+
+        # Add api_key if provided (for cli-proxy-api managed models)
+        if api_key:
+            completion_args["api_key"] = api_key
 
         # Make initial request to the LLM
-        response = litellm.completion(**completion_args)
+        with thinking_indicator():
+            response = litellm.completion(**completion_args)
 
         # Handle tool calls iteratively with limit
         iteration_count = 0
-        while response.choices[0].message.tool_calls and iteration_count < max_iterations:
+        while (
+            response.choices[0].message.tool_calls and iteration_count < max_iterations
+        ):
             iteration_count += 1
             # Add the assistant's message with tool calls
             messages.append(response.choices[0].message.model_dump())
@@ -2962,7 +3736,8 @@ async def ask_ai_conversational_async(
             completion_args["messages"] = messages
 
             # Get next response from LLM
-            response = litellm.completion(**completion_args)
+            with thinking_indicator():
+                response = litellm.completion(**completion_args)
 
         # Add the final assistant response to messages
         final_response = response.choices[0].message.content
@@ -2991,15 +3766,15 @@ def chat(
         None, help="Initial message to send (use '-' to read from stdin)"
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m", help="Model to use (format: provider/model)"
+        None,
+        "--model",
+        "-m",
+        help="Model name from registry (e.g., 'opencode/glm-4.7') or LiteLLM string",
     ),
     base_url: Optional[str] = typer.Option(
         None,
         "--base-url",
         help="Custom API base URL (overrides OPENAI_BASE_URL env var)",
-    ),
-    profile: Optional[str] = typer.Option(
-        None, "--profile", "-p", help="Profile to use for API key and configuration"
     ),
     session: Optional[str] = typer.Option(
         None,
@@ -3035,7 +3810,9 @@ def chat(
         help="Resume the most recently updated session",
     ),
     max_iterations: int = typer.Option(
-        200, "--max-iterations", help="Maximum number of tool calling iterations (default: 200)"
+        200,
+        "--max-iterations",
+        help="Maximum number of tool calling iterations (default: 200)",
     ),
 ):
     """Start or resume an interactive chat session with history persistence.
@@ -3047,13 +3824,14 @@ def chat(
     import os
     import sys
 
-    # Resolve session, model/base_url/profile before starting interactive loop
+    # Resolve session and model/base_url before starting interactive loop
     active_session = None
-    selected_profile = profile
 
     # Convenience: --resume picks most recent session when --session not provided
     if resume and not session and not new:
-        most_recent = session_store.list_sessions(limit=1, sort_by="updated_at", reverse=True)
+        most_recent = session_store.list_sessions(
+            limit=1, sort_by="updated_at", reverse=True
+        )
         if most_recent:
             session = most_recent[0].get("session_id")
             console.print(f"[dim]Resuming most recent session: {session[:8]}...[/dim]")
@@ -3067,12 +3845,11 @@ def chat(
                 resolved = session_store.find(session)
                 active_session = session_store.load(resolved)
             # Fill missing CLI args from stored session metadata
+            # Check model_name first (legacy), then model for backwards compatibility
             if model is None:
-                model = active_session.get("model")
+                model = active_session.get("model_name") or active_session.get("model")
             if base_url is None:
                 base_url = active_session.get("base_url")
-            if selected_profile is None:
-                selected_profile = active_session.get("profile")
         except FileNotFoundError:
             console.print(f"[red]Session not found: {session}[/red]")
             raise typer.Exit(1)
@@ -3080,8 +3857,14 @@ def chat(
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
 
-    # Initialize configuration from profiles (sets env vars, defaults)
-    model, base_url = initialize_ai_config(model, base_url, selected_profile)
+    # Save original model string for session storage (before resolution)
+    original_model = model
+
+    # Initialize configuration from model registry (sets env vars, defaults)
+    # model can be a registry name or LiteLLM string - initialize_ai_config handles both
+    model, base_url, api_key, model_display_name = initialize_ai_config(
+        model, base_url, None
+    )
 
     async def run_interactive_chat():
         import signal
@@ -3111,8 +3894,8 @@ def chat(
         chat_dir = Path(data_home) / "searxng-ai-kit" / "chats"
         chat_dir.mkdir(parents=True, exist_ok=True)
 
-        # Compute model display name
-        model_name = model.split("/")[-1] if "/" in model else model
+        # Compute model display name for output
+        model_display_name = model.split("/")[-1] if "/" in model else model
 
         # Establish or resume session JSON + markdown transcript
         if active_session and not new:
@@ -3129,10 +3912,12 @@ def chat(
                 chat_file = Path(mp)
             else:
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
+                chat_file = chat_dir / f"chat-{timestamp}-{model_display_name}.md"
                 with open(chat_file, "w", encoding="utf-8") as f:
                     f.write(f"# SearXNG AI Kit Chat Session\n\n")
-                    f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n")
+                    f.write(
+                        f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n"
+                    )
                     f.write(f"**Model:** {model}  \\n")
                     f.write(f"**Session:** {session_id}  \\n\\n")
                     f.write("---\n\n")
@@ -3145,17 +3930,21 @@ def chat(
         else:
             # New session: create JSON session and markdown
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
+            # Use display name (sanitized) for filename
+            safe_model_name = model_display_name.replace("/", "-")
+            chat_file = chat_dir / f"chat-{timestamp}-{safe_model_name}.md"
             with open(chat_file, "w", encoding="utf-8") as f:
                 f.write(f"# SearXNG AI Kit Chat Session\n\n")
-                f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n")
-                f.write(f"**Model:** {model}  \\n")
+                f.write(
+                    f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n"
+                )
+                f.write(f"**Model:** {model_display_name}  \\n")
                 f.write(f"**Session:** (pending)  \\n\\n")
                 f.write("---\n\n")
             session_obj = session_store.create(
                 model=model,
                 base_url=base_url,
-                profile=selected_profile,
+                model_name=model_display_name,  # Store display name for session resume
                 markdown_path=str(chat_file),
                 title=title,
             )
@@ -3164,7 +3953,9 @@ def chat(
         # Setup console for input/output
         stderr_console = Console(file=sys.stderr, force_terminal=True)
         stderr_console.print(f"[dim]SearXNG AI Kit - Interactive Chat[/dim]")
-        stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
+        stderr_console.print(
+            f"[dim]Using model: [blue]{model_display_name}[/blue][/dim]"
+        )
         stderr_console.print(f"[dim]Chat history: {chat_file}[/dim]")
         stderr_console.print(f"[dim]Session ID: [cyan]{session_id}[/cyan][/dim]")
         stderr_console.print(
@@ -3190,7 +3981,9 @@ def chat(
                 if role == "user":
                     stderr_console.print(f"[bold green]You:[/bold green] {content}")
                 elif role == "assistant":
-                    stderr_console.print(f"[bold blue]{model_label}:[/bold blue] {content}")
+                    stderr_console.print(
+                        f"[bold blue]{model_label}:[/bold blue] {content}"
+                    )
                 else:
                     continue
                 stderr_console.print()
@@ -3198,7 +3991,9 @@ def chat(
 
         # Reprint history if resuming (before first prompt)
         if active_session and not new and not no_reprint and messages:
-            _reprint_conversation_history(messages, model_name, last_n=reprint_last)
+            _reprint_conversation_history(
+                messages, model_display_name, last_n=reprint_last
+            )
 
         # Setup signal handling for graceful shutdown
         shutdown_requested = False
@@ -3295,7 +4090,8 @@ def chat(
                         messages=messages,
                         model=model,
                         base_url=base_url,
-                        profile=selected_profile,
+                        model_name=None,  # Already resolved via initialize_ai_config
+                        api_key=api_key,  # Pass through resolved API key
                         max_iterations=max_iterations,
                     )
             except KeyboardInterrupt:
@@ -3309,13 +4105,15 @@ def chat(
                 session_store.save(session_obj)
 
                 # Display the response with model name instead of "Assistant"
-                stderr_console.print(f"[bold blue]{model_name}:[/bold blue] ", end="")
+                stderr_console.print(
+                    f"[bold blue]{model_display_name}:[/bold blue] ", end=""
+                )
                 print(result["response"])
                 stderr_console.print()
 
                 # Save assistant response to markdown file
                 with open(chat_file, "a", encoding="utf-8") as f:
-                    f.write(f"## {model_name}\n\n{result['response']}\n\n")
+                    f.write(f"## {model_display_name}\n\n{result['response']}\n\n")
             else:
                 # Display error
                 stderr_console.print(f"[red]Error: {result['error']}[/red]")
@@ -3372,7 +4170,8 @@ def chat(
                             messages=messages,
                             model=model,
                             base_url=base_url,
-                            profile=selected_profile,
+                            model_name=None,  # Already resolved via initialize_ai_config
+                            api_key=api_key,  # Pass through resolved API key
                             max_iterations=max_iterations,
                         )
                 except KeyboardInterrupt:
@@ -3387,14 +4186,14 @@ def chat(
 
                     # Display the response with model name instead of "Assistant"
                     stderr_console.print(
-                        f"[bold blue]{model_name}:[/bold blue] ", end=""
+                        f"[bold blue]{model_display_name}:[/bold blue] ", end=""
                     )
                     print(result["response"])
                     stderr_console.print()
 
                     # Save assistant response to markdown file
                     with open(chat_file, "a", encoding="utf-8") as f:
-                        f.write(f"## {model_name}\n\n{result['response']}\n\n")
+                        f.write(f"## {model_display_name}\n\n{result['response']}\n\n")
                 else:
                     # Display error
                     stderr_console.print(f"[red]Error: {result['error']}[/red]")
@@ -3414,74 +4213,969 @@ def chat(
     asyncio.run(run_interactive_chat())
 
 
-# Profile management commands
-profile_app = typer.Typer(help="Manage user profiles for API keys and configurations")
+# Models command group (registry management + CLI Proxy API)
+models_app = typer.Typer(
+    help="Manage AI models and configurations", no_args_is_help=True
+)
 
 
-@profile_app.command()
+@models_app.command()
 def add(
-    name: str = typer.Argument(..., help="Profile name"),
-    api_key: str = typer.Argument(..., help="API key"),
-    type: str = typer.Option(
-        "openai",
-        "--type",
-        "-t",
-        help="Provider type: openrouter, anthropic, openai, google",
+    name: str = typer.Argument(
+        ..., help="Model name (e.g., 'openai/gpt-5' or 'my-model')"
     ),
-    base_url: Optional[str] = typer.Option(None, "--base-url", help="Custom base URL"),
-    model: Optional[str] = typer.Option(None, "--model", help="Default model"),
+    model_type: str = typer.Argument(
+        ..., help="LiteLLM protocol type: openai, anthropic, gemini, etc."
+    ),
+    model_id: str = typer.Argument(..., help="Upstream model identifier"),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url", "-u", help="Custom API base URL"
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key", "-k", help="API key (stored securely)"
+    ),
     force: bool = typer.Option(
-        False, "--force", help="Overwrite existing profile without confirmation"
+        False, "--force", "-f", help="Overwrite existing model without confirmation"
     ),
 ):
-    """Add a new profile."""
-    if type not in ["openrouter", "anthropic", "openai", "google"]:
+    """Add a new model to the registry.
+
+    Examples:
+        searxng model add openai/gpt-5 openai gpt-5
+        searxng model add my-claude anthropic claude-sonnet-4-5-20250929 --api-key sk-xxx
+        searxng model add openrouter/gpt-5 openai openai/gpt-5 --base-url https://openrouter.ai/api/v1
+    """
+    model_manager.add_model(name, model_type, model_id, base_url, api_key, force=force)
+
+
+@models_app.command(name="list")
+def model_list_cmd():
+    """List all models (registry + CLI Proxy API)."""
+    models = model_manager.list_models()
+
+    # Also get CLI Proxy API models if enabled
+    cli_proxy_models = []
+    if cli_proxy_config.is_enabled() and cli_proxy_config.is_cli_proxy_available():
+        config_path = cli_proxy_config.find_cli_proxy_config()
+        if config_path and cli_proxy_config.ensure_running(config_path):
+            cli_proxy_models = cli_proxy_config.get_models()
+
+    if not models and not cli_proxy_models:
+        console.print("[yellow]No models available.[/yellow]")
+        console.print(f"[dim]Models are stored in: {model_manager.models_file}[/dim]")
+        console.print()
         console.print(
-            f"[red]Error: Invalid provider type '{type}'. Must be one of: openrouter, anthropic, openai, google[/red]"
+            "[dim]Add a model: searxng models add <name> <type> <model_id>[/dim]"
+        )
+        console.print("[dim]Import from OpenCode: searxng models import opencode[/dim]")
+        console.print(
+            "[dim]Enable CLI Proxy API: searxng models cli-proxy-api enable[/dim]"
+        )
+        return
+
+    # Get global default
+    global_default = global_config.get_default_model()
+
+    table = Table(title="Available Models")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Model ID", style="green")
+    table.add_column("Source", style="blue")
+    table.add_column("Default", style="green")
+
+    # Add registry models
+    for name, model in models.items():
+        # Skip malformed entries (e.g., orphan metadata sections)
+        if "type" not in model or "model_id" not in model:
+            continue
+        is_default = "✓" if name == global_default else ""
+        table.add_row(
+            name,
+            model["type"],
+            model["model_id"],
+            model.get("source", "registry"),
+            is_default,
+        )
+
+    # Add CLI Proxy API models (all use anthropic protocol by default)
+    for model_id in cli_proxy_models:
+        full_name = f"cli-proxy-api/{model_id}"
+        is_default = "✓" if full_name == global_default else ""
+        table.add_row(full_name, "anthropic", model_id, "cli-proxy-api", is_default)
+
+    console.print(table)
+    console.print(f"[dim]Registry: {model_manager.models_file}[/dim]")
+
+
+@models_app.command()
+def show(name: str = typer.Argument(..., help="Model name")):
+    """Show model details."""
+    # Handle CLI Proxy API models
+    if name.startswith("cli-proxy-api/"):
+        model_id = name[len("cli-proxy-api/") :]
+        # All CLI Proxy API models use anthropic protocol by default
+        protocol = "anthropic"
+        base_url = cli_proxy_config.get_base_url() or "http://localhost:8317"
+
+        global_default = global_config.get_default_model()
+        is_default = name == global_default
+
+        console.print(f"\n[bold]Model:[/bold] {name}")
+        console.print(f"[bold]Protocol:[/bold] {protocol}")
+        console.print(f"[bold]Model ID:[/bold] {model_id}")
+        console.print(f"[bold]Base URL:[/bold] {base_url}")
+        console.print(f"[bold]Source:[/bold] cli-proxy-api")
+        console.print(f"[bold]Default:[/bold] {'Yes' if is_default else 'No'}")
+        return
+
+    # Registry model
+    model_manager.show_model(name)
+
+
+@models_app.command()
+def remove(
+    name: str = typer.Argument(..., help="Model name"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+):
+    """Remove a model from registry."""
+    model_manager.remove_model(name, force=force)
+
+
+@models_app.command(name="set-default")
+def model_set_default(
+    name: Optional[str] = typer.Argument(
+        None, help="Model name (omit to show current)"
+    ),
+):
+    """Set or show default model for AI operations.
+
+    When called without arguments, shows the current default model.
+    The model can be a registry model name or a cli-proxy-api model.
+    """
+    # If no name provided, show current default
+    if name is None:
+        current = global_config.get_default_model()
+        if current:
+            console.print(f"Default model: [green]{current}[/green]")
+        else:
+            console.print("[dim]No default model set.[/dim]")
+            console.print(
+                "[dim]Use 'searxng models set-default <name>' to set one.[/dim]"
+            )
+        return
+
+    # Validate the model exists (either in registry or as cli-proxy-api model)
+    registry_models = model_manager.list_models()
+    is_registry_model = name in registry_models
+    is_cli_proxy_model = name.startswith("cli-proxy-api/")
+
+    if not is_registry_model and not is_cli_proxy_model:
+        console.print(f"[red]Model '{name}' not found in registry.[/red]")
+        console.print("[dim]Use 'searxng models list' to see available models.[/dim]")
+        raise typer.Exit(1)
+
+    global_config.set_default_model(name)
+    console.print(f"[green]Default model set to: {name}[/green]")
+
+
+@models_app.command()
+def edit():
+    """Edit the models file using system editor."""
+    model_manager.edit_models_file()
+
+
+@models_app.command()
+def test(name: str = typer.Argument(..., help="Model name")):
+    """Test a model by making an API call."""
+    model_manager.test_model(name)
+
+
+# OpenCode import subcommand group
+import_app = typer.Typer(
+    help="Import models from external sources", no_args_is_help=True
+)
+
+
+# Known provider defaults for providers that may only be in auth.json
+# These are Vercel AI SDK community providers with known configurations
+KNOWN_PROVIDERS = {
+    "minimax": {
+        "type": "anthropic",
+        "base_url": "https://api.minimax.io/anthropic",
+        "models": {
+            "MiniMax-M2.1": {"name": "MiniMax M2.1"},
+            "MiniMax-M2": {"name": "MiniMax M2"},
+            "MiniMax-M2-Stable": {"name": "MiniMax M2 Stable"},
+        },
+    },
+    "minimax-m2": {
+        "type": "anthropic",
+        "base_url": "https://api.minimax.io/anthropic",
+        "models": {
+            "MiniMax-M2.1": {"name": "MiniMax M2.1"},
+            "MiniMax-M2": {"name": "MiniMax M2"},
+            "MiniMax-M2-Stable": {"name": "MiniMax M2 Stable"},
+        },
+    },
+    "zai-coding-plan": {
+        "type": "anthropic",
+        "base_url": "https://api.z.ai/api/anthropic",
+        "models": {
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.7-flash": {"name": "GLM 4.7 Flash"},
+            "glm-4.6": {"name": "GLM 4.6"},
+            "glm-4.6v": {"name": "GLM 4.6 Vision"},
+            "glm-4.5": {"name": "GLM 4.5"},
+            "glm-4.5-air": {"name": "GLM 4.5 Air"},
+            "glm-4.5-flash": {"name": "GLM 4.5 Flash"},
+            "glm-4.5v": {"name": "GLM 4.5 Vision"},
+        },
+    },
+    # OpenCode Zen - Claude models (Anthropic API)
+    "opencode-zen-anthropic": {
+        "type": "anthropic",
+        "base_url": "https://opencode.ai/zen/v1",
+        "models": {
+            "claude-opus-4-5": {"name": "Claude Opus 4.5"},
+            "claude-opus-4-1": {"name": "Claude Opus 4.1"},
+            "claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"},
+            "claude-sonnet-4": {"name": "Claude Sonnet 4"},
+            "claude-haiku-4-5": {"name": "Claude Haiku 4.5"},
+            "claude-3-5-haiku": {"name": "Claude 3.5 Haiku"},
+        },
+    },
+    # OpenCode Zen - OpenAI-compatible models (chat/completions API)
+    "opencode-zen": {
+        "type": "openai",
+        "base_url": "https://opencode.ai/zen/v1",
+        "models": {
+            # GPT models
+            "gpt-5.2": {"name": "GPT 5.2"},
+            "gpt-5.2-codex": {"name": "GPT 5.2 Codex"},
+            "gpt-5.1": {"name": "GPT 5.1"},
+            "gpt-5.1-codex": {"name": "GPT 5.1 Codex"},
+            "gpt-5.1-codex-max": {"name": "GPT 5.1 Codex Max"},
+            "gpt-5.1-codex-mini": {"name": "GPT 5.1 Codex Mini"},
+            "gpt-5": {"name": "GPT 5"},
+            "gpt-5-codex": {"name": "GPT 5 Codex"},
+            "gpt-5-nano": {"name": "GPT 5 Nano (Free)"},
+            # Other OpenAI-compatible models
+            "minimax-m2.1": {"name": "MiniMax M2.1"},
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.6": {"name": "GLM 4.6"},
+            "kimi-k2.5": {"name": "Kimi K2.5"},
+            "kimi-k2-thinking": {"name": "Kimi K2 Thinking"},
+            "kimi-k2": {"name": "Kimi K2"},
+            "qwen3-coder": {"name": "Qwen3 Coder 480B"},
+            "big-pickle": {"name": "Big Pickle (Free)"},
+            # Gemini models (also via OpenAI-compatible)
+            "gemini-3-pro": {"name": "Gemini 3 Pro"},
+            "gemini-3-flash": {"name": "Gemini 3 Flash"},
+        },
+    },
+    # Legacy alias for backwards compatibility
+    "opencode": {
+        "type": "openai",
+        "base_url": "https://opencode.ai/zen/v1",
+        "models": {
+            # Same as opencode-zen for backwards compatibility
+            "big-pickle": {"name": "Big Pickle (Free)"},
+            "minimax-m2.1": {"name": "MiniMax M2.1"},
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.6": {"name": "GLM 4.6"},
+            "kimi-k2.5": {"name": "Kimi K2.5"},
+            "kimi-k2-thinking": {"name": "Kimi K2 Thinking"},
+            "kimi-k2": {"name": "Kimi K2"},
+            "qwen3-coder": {"name": "Qwen3 Coder 480B"},
+        },
+    },
+}
+
+
+def _infer_litellm_type(provider_id: str, npm_package: Optional[str]) -> Optional[str]:
+    """Infer LiteLLM type from OpenCode provider config.
+
+    Args:
+        provider_id: The provider ID from OpenCode config
+        npm_package: The npm package name if specified
+
+    Returns:
+        LiteLLM type string or None if unknown
+    """
+    # Check npm package first
+    if npm_package:
+        npm_lower = npm_package.lower()
+        if "@ai-sdk/openai" in npm_lower or "@ai-sdk/openai-compatible" in npm_lower:
+            return "openai"
+        elif "@ai-sdk/anthropic" in npm_lower:
+            return "anthropic"
+        elif "@ai-sdk/google" in npm_lower:
+            return "gemini"
+
+    # Fallback to provider ID
+    provider_lower = provider_id.lower()
+    if provider_lower == "openai":
+        return "openai"
+    elif provider_lower == "anthropic":
+        return "anthropic"
+    elif provider_lower == "google":
+        return "gemini"
+    elif provider_lower == "openrouter":
+        return "openrouter"
+    elif provider_lower == "moonshotai":
+        return "anthropic"  # Moonshot uses anthropic-compatible API
+
+    # Check known providers
+    if provider_id in KNOWN_PROVIDERS:
+        return KNOWN_PROVIDERS[provider_id]["type"]
+
+    return None
+
+
+def _parse_jsonc(content: str) -> Dict[str, Any]:
+    """Parse JSONC (JSON with Comments) content.
+
+    Strips // and /* */ comments before parsing.
+    """
+    import re
+
+    # Remove single-line comments (but not within strings)
+    # This is a simple approach that works for most JSONC files
+    lines = content.split("\n")
+    cleaned_lines = []
+    in_block_comment = False
+
+    for line in lines:
+        if in_block_comment:
+            if "*/" in line:
+                line = line[line.index("*/") + 2 :]
+                in_block_comment = False
+            else:
+                continue
+
+        # Remove block comments that start and end on same line
+        while "/*" in line and "*/" in line:
+            start = line.index("/*")
+            end = line.index("*/") + 2
+            line = line[:start] + line[end:]
+
+        # Check for block comment start
+        if "/*" in line:
+            line = line[: line.index("/*")]
+            in_block_comment = True
+
+        # Remove single-line comments (simple approach - doesn't handle // in strings)
+        if "//" in line:
+            # Find // that's not inside a string (simplified)
+            in_string = False
+            for i, char in enumerate(line):
+                if char == '"' and (i == 0 or line[i - 1] != "\\"):
+                    in_string = not in_string
+                elif not in_string and line[i : i + 2] == "//":
+                    line = line[:i]
+                    break
+
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines)
+
+    # Remove trailing commas before } or ] (valid in JSONC, invalid in JSON)
+    # This regex handles commas followed by whitespace/newlines and then } or ]
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+
+    return json.loads(cleaned)
+
+
+@import_app.command(name="opencode")
+def import_opencode(
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to opencode.jsonc (default: ~/.config/opencode/opencode.jsonc)",
+    ),
+    auth_path: Optional[str] = typer.Option(
+        None,
+        "--auth",
+        "-a",
+        help="Path to auth.json (default: ~/.local/share/opencode/auth.json)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Print what would be imported without writing"
+    ),
+):
+    """Import models from OpenCode configuration.
+
+    Reads OpenCode's config and auth files to import API-key authenticated
+    models into the searxng model registry.
+
+    Only providers with API key authentication are imported (OAuth-only
+    providers are skipped with a warning).
+
+    Examples:
+        searxng model import opencode --dry-run
+        searxng model import opencode
+        searxng model import opencode --config /path/to/opencode.jsonc
+    """
+    # Determine paths
+    if config_path:
+        config_file = Path(config_path).expanduser()
+    else:
+        # Try .jsonc first, then .json
+        config_dir = Path.home() / ".config" / "opencode"
+        config_file = config_dir / "opencode.jsonc"
+        if not config_file.exists():
+            config_file = config_dir / "opencode.json"
+
+    if auth_path:
+        auth_file = Path(auth_path).expanduser()
+    else:
+        auth_file = Path.home() / ".local" / "share" / "opencode" / "auth.json"
+
+    # Check files exist
+    if not config_file.exists():
+        console.print(f"[red]Error: Config file not found. Tried:[/red]")
+        console.print(f"[red]  - ~/.config/opencode/opencode.jsonc[/red]")
+        console.print(f"[red]  - ~/.config/opencode/opencode.json[/red]")
+        raise typer.Exit(1)
+
+    if not auth_file.exists():
+        console.print(f"[red]Error: Auth file not found: {auth_file}[/red]")
+        raise typer.Exit(1)
+
+    # Load auth file
+    try:
+        with open(auth_file, "r") as f:
+            auth_data = json.load(f)
+    except Exception as e:
+        console.print(f"[red]Error loading auth file: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Load config file (JSONC)
+    try:
+        with open(config_file, "r") as f:
+            config_content = f.read()
+        config_data = _parse_jsonc(config_content)
+    except Exception as e:
+        console.print(f"[red]Error loading config file: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Get current registry to check for existing default
+    current_data = model_manager._load_models()
+    current_default = current_data["settings"].get("default_model")
+
+    # Get OpenCode default model
+    opencode_default = config_data.get("model")  # e.g., "anthropic/claude-opus-4-5"
+
+    # Track imports
+    imported = []
+    skipped = []
+    new_default = None
+
+    # Get providers from config
+    providers = config_data.get("provider", {})
+
+    for provider_id, provider_config in providers.items():
+        # Check for API key - first in auth.json, then in config options
+        auth_entry = auth_data.get(provider_id, {})
+        auth_type = auth_entry.get("type")
+
+        # Get API key from auth.json or from provider config options
+        api_key = None
+        if auth_type == "api":
+            api_key = auth_entry.get("key")
+        elif provider_config.get("options", {}).get("apiKey"):
+            # API key hardcoded in config options (e.g., for proxy servers)
+            api_key = provider_config["options"]["apiKey"]
+            auth_type = "config"  # Mark source for display
+
+        if not api_key:
+            reason = (
+                f"OAuth-only (type={auth_type})" if auth_type else "No API key found"
+            )
+            skipped.append((provider_id, reason))
+            continue
+
+        # Infer LiteLLM type
+        npm_package = provider_config.get("npm")
+        litellm_type = _infer_litellm_type(provider_id, npm_package)
+
+        if not litellm_type:
+            skipped.append((provider_id, f"Unknown type (npm={npm_package})"))
+            continue
+
+        # Get models
+        models = provider_config.get("models", {})
+
+        if not models:
+            skipped.append((provider_id, "No models defined"))
+            continue
+
+        # Get base URL if specified
+        base_url = None
+        options = provider_config.get("options", {})
+        if options.get("baseURL"):
+            base_url = options["baseURL"]
+            # Strip trailing /v1 from base URL for anthropic-type models
+            # OpenCode's @ai-sdk/anthropic expects base URL with /v1
+            # but LiteLLM's anthropic provider adds /v1 itself
+            if litellm_type == "anthropic" and base_url.rstrip("/").endswith("/v1"):
+                base_url = base_url.rstrip("/")[:-3].rstrip("/")
+
+        # Import each model
+        for model_id, model_config in models.items():
+            # Build registry name
+            name = f"{provider_id}/{model_id}"
+
+            # Build metadata
+            metadata = {"source": "opencode"}
+            if model_config.get("name"):
+                metadata["display_name"] = model_config["name"]
+
+            imported.append(
+                {
+                    "name": name,
+                    "type": litellm_type,
+                    "model_id": model_id,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "metadata": metadata,
+                }
+            )
+
+            # Check if this is the OpenCode default
+            if opencode_default and opencode_default == f"{provider_id}/{model_id}":
+                new_default = name
+
+    # Also check auth.json for known providers that aren't in the config
+    # These are Vercel AI SDK community providers with known configurations
+    for provider_id, auth_entry in auth_data.items():
+        # Skip if already processed from config
+        if provider_id in providers:
+            continue
+
+        # Skip if not a known provider
+        if provider_id not in KNOWN_PROVIDERS:
+            continue
+
+        # Skip if not API auth
+        if auth_entry.get("type") != "api":
+            skipped.append((provider_id, f"OAuth-only (type={auth_entry.get('type')})"))
+            continue
+
+        api_key = auth_entry.get("key")
+        if not api_key:
+            skipped.append((provider_id, "No API key"))
+            continue
+
+        # Get known provider config
+        known_config = KNOWN_PROVIDERS[provider_id]
+        litellm_type = known_config["type"]
+        base_url = known_config["base_url"]
+        models = known_config["models"]
+
+        # Import each model
+        for model_id, model_config in models.items():
+            name = f"{provider_id}/{model_id}"
+
+            metadata = {"source": "opencode"}
+            if model_config.get("name"):
+                metadata["display_name"] = model_config["name"]
+
+            imported.append(
+                {
+                    "name": name,
+                    "type": litellm_type,
+                    "model_id": model_id,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "metadata": metadata,
+                }
+            )
+
+    # Output results
+    if dry_run:
+        console.print("[bold]Dry run - would import:[/bold]\n")
+
+        if imported:
+            table = Table(title="Models to Import")
+            table.add_column("Name", style="cyan")
+            table.add_column("Type", style="magenta")
+            table.add_column("Model ID", style="green")
+            table.add_column("Base URL", style="blue")
+
+            for model in imported:
+                table.add_row(
+                    model["name"],
+                    model["type"],
+                    model["model_id"],
+                    model.get("base_url") or "-",
+                )
+
+            console.print(table)
+            console.print(f"\n[green]Would import {len(imported)} models[/green]")
+
+            if new_default:
+                console.print(f"[blue]Would set default model: {new_default}[/blue]")
+        else:
+            console.print("[yellow]No models would be imported[/yellow]")
+
+        if skipped:
+            console.print(f"\n[yellow]Skipped {len(skipped)} providers:[/yellow]")
+            for provider_id, reason in skipped:
+                console.print(f"  - {provider_id}: {reason}")
+    else:
+        # Actually import
+        for model in imported:
+            model_manager.add_model(
+                name=model["name"],
+                model_type=model["type"],
+                model_id=model["model_id"],
+                base_url=model.get("base_url"),
+                api_key=model.get("api_key"),
+                metadata=model.get("metadata"),
+                force=True,  # Overwrite existing
+            )
+
+        # Set default if OpenCode default was imported and we don't have one
+        if new_default and not current_default:
+            model_manager.set_default(new_default)
+
+        console.print(f"\n[green]✓ Imported {len(imported)} models[/green]")
+
+        if new_default and not current_default:
+            console.print(f"[blue]Set default model: {new_default}[/blue]")
+
+        if skipped:
+            console.print(f"\n[yellow]Skipped {len(skipped)} providers:[/yellow]")
+            for provider_id, reason in skipped:
+                console.print(f"  - {provider_id}: {reason}")
+
+
+# Add import subcommand to model app
+models_app.add_typer(import_app, name="import")
+
+
+# Shared helper for default model management (used by both config and models commands)
+def _handle_default_model(
+    model: Optional[str] = None,
+    clear: bool = False,
+    hint_command: str = "searxng config default-model",
+) -> None:
+    """Shared logic for getting/setting the default model.
+
+    Args:
+        model: Model to set, or None to show current
+        clear: If True, clear the default model
+        hint_command: Command to show in help hints
+    """
+    if clear:
+        global_config.set_default_model(None)
+        console.print("[green]✓[/green] Global default model cleared")
+        console.print(
+            "[dim]Will use model registry defaults or hardcoded fallbacks.[/dim]"
+        )
+    elif model:
+        global_config.set_default_model(model)
+        console.print(f"[green]✓[/green] Global default model set to: {model}")
+        console.print(
+            "[dim]This will be used for 'searxng ask' and 'searxng chat' when no --model is specified.[/dim]"
+        )
+    else:
+        current = global_config.get_default_model()
+        if current:
+            console.print(f"Global default model: {current}")
+        else:
+            console.print("No global default model set")
+            console.print(f"[dim]Use '{hint_command} <model>' to set one[/dim]")
+
+
+# Configuration management commands
+config_app = typer.Typer(help="Manage searxng configuration", no_args_is_help=True)
+
+
+@config_app.command(name="default-model")
+def config_default_model(
+    model: Optional[str] = typer.Argument(
+        None, help="Model to set as default (format: provider/model)"
+    ),
+    clear: bool = typer.Option(False, "--clear", "-c", help="Clear the default model"),
+):
+    """Get or set the global default model for AI operations.
+
+    With no arguments, shows the current default model.
+    With a model argument, sets it as the default.
+    With --clear, removes the default model setting.
+
+    Examples:
+        searxng config default-model                    # Show current
+        searxng config default-model openai/gpt-4      # Set default
+        searxng config default-model cli-proxy-api/claude-sonnet-4-5-20250929
+        searxng config default-model --clear           # Clear default
+    """
+    _handle_default_model(model, clear, "searxng config default-model")
+
+
+@config_app.command(name="show")
+def config_show():
+    """Show all configuration settings."""
+    console.print("\n[bold]Configuration[/bold]\n")
+
+    # Global default model
+    default = global_config.get_default_model()
+    if default:
+        console.print(f"Default model: {default}")
+    else:
+        console.print("Default model: [dim]not set[/dim]")
+
+    # CLI Proxy API status
+    console.print(f"\nCLI Proxy API enabled: {cli_proxy_config.is_enabled()}")
+    proxy_default = cli_proxy_config.get_default_model()
+    if proxy_default:
+        console.print(f"CLI Proxy API default model: {proxy_default}")
+
+    # Config file location
+    console.print(f"\nConfig file: {global_config.config_file}")
+
+
+# Add config command group to main app
+app.add_typer(config_app, name="config")
+
+# Add models command group to main app
+app.add_typer(models_app, name="models")
+
+
+# CLI Proxy API management commands
+cli_proxy_app = typer.Typer(
+    help="Manage CLI Proxy API integration", no_args_is_help=True
+)
+
+
+@cli_proxy_app.command()
+def status():
+    """Show CLI Proxy API integration status."""
+    status_info = cli_proxy_config.get_status()
+
+    console.print("\n[bold]CLI Proxy API Status[/bold]\n")
+
+    # Binary availability
+    if status_info["binary_available"]:
+        console.print("[green]✓[/green] cli-proxy-api binary found on PATH")
+    else:
+        console.print("[red]✗[/red] cli-proxy-api binary not found on PATH")
+        console.print(
+            "  [dim]Install from: https://github.com/router-for-me/CLIProxyAPI[/dim]"
+        )
+
+    # Integration enabled
+    if status_info["enabled"]:
+        console.print("[green]✓[/green] Integration enabled")
+    else:
+        console.print("[yellow]○[/yellow] Integration disabled")
+
+    # Config file
+    if status_info["config_found"]:
+        console.print(f"[green]✓[/green] Config found: {status_info['config_path']}")
+    else:
+        console.print("[yellow]○[/yellow] No config file found")
+        console.print(
+            "  [dim]Checked: ~/.cli-proxy-api/config.yaml, ~/.config/cli-proxy-api/config.yaml[/dim]"
+        )
+
+    # Explicit config path
+    if status_info["explicit_config_path"]:
+        console.print(
+            f"  [dim]Explicit path set: {status_info['explicit_config_path']}[/dim]"
+        )
+
+    # Default model
+    if status_info["default_model"]:
+        console.print(
+            f"[green]✓[/green] Default model: cli-proxy-api/{status_info['default_model']}"
+        )
+    else:
+        console.print("[dim]○[/dim] No default model set")
+        console.print(
+            "  [dim]Set with: searxng cli-proxy-api set-default-model <model>[/dim]"
+        )
+
+    # Process status (only if binary and config available)
+    if status_info["binary_available"] and status_info["config_found"]:
+        manager = cli_proxy_config
+        if manager.is_running():
+            console.print(f"[green]✓[/green] Process running on port {manager.port}")
+            # Try to get model count
+            models = manager.get_models()
+            if models:
+                console.print(f"[green]✓[/green] {len(models)} models available")
+            else:
+                console.print(
+                    "[yellow]○[/yellow] No models returned (check auth/OAuth)"
+                )
+        else:
+            console.print("[dim]○[/dim] Process not started (starts on first use)")
+
+    # Overall readiness
+    console.print()
+    if status_info["binary_available"] and status_info["config_found"]:
+        if status_info["enabled"]:
+            console.print("[green]Ready to use CLI Proxy API for AI requests[/green]")
+        else:
+            console.print(
+                "[yellow]CLI Proxy API available but disabled. Run 'searxng cli-proxy-api enable' to enable.[/yellow]"
+            )
+    else:
+        missing = []
+        if not status_info["binary_available"]:
+            missing.append("binary")
+        if not status_info["config_found"]:
+            missing.append("config")
+        console.print(f"[red]Not ready: missing {', '.join(missing)}[/red]")
+
+
+@cli_proxy_app.command()
+def enable():
+    """Enable CLI Proxy API integration."""
+    cli_proxy_config.set_enabled(True)
+    console.print("[green]CLI Proxy API integration enabled.[/green]")
+
+    # Check if actually usable
+    status_info = cli_proxy_config.get_status()
+    if not status_info["binary_available"]:
+        console.print(
+            "[yellow]Warning: cli-proxy-api binary not found on PATH[/yellow]"
+        )
+    if not status_info["config_found"]:
+        console.print("[yellow]Warning: No cli-proxy-api config file found[/yellow]")
+
+
+@cli_proxy_app.command()
+def disable():
+    """Disable CLI Proxy API integration."""
+    cli_proxy_config.set_enabled(False)
+    console.print("[green]CLI Proxy API integration disabled.[/green]")
+
+
+@cli_proxy_app.command(name="set-config")
+def set_config(
+    path: str = typer.Argument(..., help="Path to cli-proxy-api config.yaml file"),
+):
+    """Set explicit path to cli-proxy-api config file."""
+    # Expand and validate path
+    config_path = Path(path).expanduser().resolve()
+
+    if not config_path.exists():
+        console.print(f"[red]Error: File not found: {config_path}[/red]")
+        raise typer.Exit(1)
+
+    if not config_path.is_file():
+        console.print(f"[red]Error: Not a file: {config_path}[/red]")
+        raise typer.Exit(1)
+
+    cli_proxy_config.set_config_path(str(config_path))
+    console.print(f"[green]Config path set to: {config_path}[/green]")
+
+
+@cli_proxy_app.command(name="clear-config")
+def clear_config():
+    """Clear explicit config path (use auto-detection)."""
+    cli_proxy_config.set_config_path(None)
+    console.print("[green]Config path cleared. Will use auto-detection.[/green]")
+
+    # Show what will be auto-detected
+    found = cli_proxy_config.find_cli_proxy_config()
+    if found:
+        console.print(f"[dim]Auto-detected config: {found}[/dim]")
+    else:
+        console.print("[dim]No config file found in standard locations.[/dim]")
+
+
+@cli_proxy_app.command(name="set-default-model")
+def set_default_model(
+    model: str = typer.Argument(
+        ..., help="Model name (e.g., claude-sonnet-4-5-20250929)"
+    ),
+):
+    """Set the default model for cli-proxy-api.
+
+    When set, 'searxng ask' and 'searxng chat' will use this model
+    automatically without needing --model flag.
+
+    Example:
+        searxng cli-proxy-api set-default-model claude-sonnet-4-5-20250929
+        searxng ask "question"  # Uses cli-proxy-api/claude-sonnet-4-5-20250929
+    """
+    # Strip cli-proxy-api/ prefix if provided
+    if model.startswith("cli-proxy-api/"):
+        model = model[len("cli-proxy-api/") :]
+
+    cli_proxy_config.set_default_model(model)
+    console.print(f"[green]Default model set to: cli-proxy-api/{model}[/green]")
+    console.print(
+        "[dim]Use 'searxng ask' or 'searxng chat' without --model to use this default[/dim]"
+    )
+
+
+@cli_proxy_app.command(name="clear-default-model")
+def clear_default_model():
+    """Clear the default model setting."""
+    cli_proxy_config.set_default_model(None)
+    console.print("[green]Default model cleared.[/green]")
+
+
+@cli_proxy_app.command(name="start")
+def start_proxy():
+    """Start cli-proxy-api subprocess (for testing)."""
+    # Check prerequisites
+    if not cli_proxy_config.is_cli_proxy_available():
+        console.print("[red]Error: cli-proxy-api binary not found on PATH[/red]")
+        raise typer.Exit(1)
+
+    config_path = cli_proxy_config.find_cli_proxy_config()
+    if not config_path:
+        console.print("[red]Error: No cli-proxy-api config file found[/red]")
+        console.print(
+            "[dim]Set one with: searxng cli-proxy-api set-config /path/to/config.yaml[/dim]"
         )
         raise typer.Exit(1)
 
-    profile_manager.add_profile(name, type, api_key, base_url, model, force)
+    console.print(f"[blue]Starting cli-proxy-api with config: {config_path}[/blue]")
+
+    manager = cli_proxy_config
+    if manager.start(config_path):
+        console.print(f"[green]Started successfully on port {manager.port}[/green]")
+        console.print(f"[dim]Base URL: {manager.get_base_url()}[/dim]")
+        console.print("[dim]Press Ctrl-C to stop[/dim]")
+
+        # Keep running until interrupted
+        import time
+
+        try:
+            while manager.is_running():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            manager.stop()
+            console.print("[yellow]Stopped.[/yellow]")
+    else:
+        console.print("[red]Failed to start cli-proxy-api[/red]")
+        raise typer.Exit(1)
 
 
-@profile_app.command(name="list")
-def list_cmd():
-    """List all profiles."""
-    profile_manager.list_profiles()
+@cli_proxy_app.command(name="stop")
+def stop_proxy():
+    """Stop cli-proxy-api subprocess if running."""
+    manager = cli_proxy_config
+    if manager.is_running():
+        manager.stop()
+        console.print("[green]Stopped cli-proxy-api[/green]")
+    else:
+        console.print("[yellow]cli-proxy-api is not running[/yellow]")
 
 
-@profile_app.command()
-def show(name: str = typer.Argument(..., help="Profile name")):
-    """Show profile details."""
-    profile_manager.show_profile(name)
-
-
-@profile_app.command()
-def remove(name: str = typer.Argument(..., help="Profile name")):
-    """Remove a profile."""
-    profile_manager.remove_profile(name)
-
-
-@profile_app.command()
-def set_default(name: str = typer.Argument(..., help="Profile name")):
-    """Set default profile."""
-    profile_manager.set_default(name)
-
-
-@profile_app.command()
-def edit(name: str = typer.Argument(..., help="Profile name")):
-    """Edit a profile using system editor."""
-    profile_manager.edit_profile(name)
-
-
-@profile_app.command()
-def test(name: str = typer.Argument(..., help="Profile name")):
-    """Test a profile by making an API call."""
-    profile_manager.test_profile(name)
-
-
-# Add profile command group to main app
-app.add_typer(profile_app, name="profile")
+# Add cli-proxy-api as subgroup under models
+models_app.add_typer(cli_proxy_app, name="cli-proxy-api")
 
 
 def main():
