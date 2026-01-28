@@ -1390,7 +1390,16 @@ def initialize_ai_config(
             raise ValueError(f"Model '{model_name}' not found in registry")
         display_name = model_name
 
-    # Only use defaults if model_name was not explicitly provided
+    # Check if --model is a registry name (not just a raw LiteLLM string)
+    # This allows users to use `--model "opencode/glm-4.7"` with registry names
+    if model and not model_config:
+        registry_model = model_manager.get_model(model)
+        if registry_model:
+            model_config = registry_model
+            display_name = model
+            model = None  # Clear so it gets built from config below
+
+    # Only use defaults if model_name was not explicitly provided and model not found in registry
     if not model_config:
         # If no model specified, check for global default model first
         if not model:
@@ -3404,7 +3413,10 @@ def ask(
         None, help="Question or research request (use '-' or omit to read from stdin)"
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m", help="LiteLLM model string (format: provider/model)"
+        None,
+        "--model",
+        "-m",
+        help="Model name from registry (e.g., 'opencode/glm-4.7') or LiteLLM string",
     ),
     format_output: str = typer.Option(
         "human", "--format", "-f", help="Output format: human or json"
@@ -3413,12 +3425,6 @@ def ask(
         None,
         "--base-url",
         help="Custom API base URL (overrides OPENAI_BASE_URL env var)",
-    ),
-    model_name: Optional[str] = typer.Option(
-        None,
-        "--model-name",
-        "-n",
-        help="Model registry name for API key and configuration",
     ),
     max_iterations: int = typer.Option(
         200,
@@ -3466,11 +3472,12 @@ def ask(
         stderr_console = Console(file=sys.stderr, force_terminal=True)
 
         # Use the shared ask function with model registry support
+        # model can be a registry name or LiteLLM string - ask_ai_async handles both
         result = await ask_ai_async(
             prompt=prompt,
             model=model,
             base_url=base_url,
-            model_name=model_name,
+            model_name=None,  # model parameter handles registry names directly now
             max_iterations=max_iterations,
         )
 
@@ -3757,18 +3764,15 @@ def chat(
         None, help="Initial message to send (use '-' to read from stdin)"
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m", help="LiteLLM model string (format: provider/model)"
+        None,
+        "--model",
+        "-m",
+        help="Model name from registry (e.g., 'opencode/glm-4.7') or LiteLLM string",
     ),
     base_url: Optional[str] = typer.Option(
         None,
         "--base-url",
         help="Custom API base URL (overrides OPENAI_BASE_URL env var)",
-    ),
-    model_name: Optional[str] = typer.Option(
-        None,
-        "--model-name",
-        "-n",
-        help="Model registry name for API key and configuration",
     ),
     session: Optional[str] = typer.Option(
         None,
@@ -3818,9 +3822,8 @@ def chat(
     import os
     import sys
 
-    # Resolve session, model/base_url/model_name before starting interactive loop
+    # Resolve session and model/base_url before starting interactive loop
     active_session = None
-    selected_model_name = model_name
 
     # Convenience: --resume picks most recent session when --session not provided
     if resume and not session and not new:
@@ -3840,12 +3843,11 @@ def chat(
                 resolved = session_store.find(session)
                 active_session = session_store.load(resolved)
             # Fill missing CLI args from stored session metadata
+            # Check model_name first (legacy), then model for backwards compatibility
             if model is None:
-                model = active_session.get("model")
+                model = active_session.get("model_name") or active_session.get("model")
             if base_url is None:
                 base_url = active_session.get("base_url")
-            if selected_model_name is None:
-                selected_model_name = active_session.get("model_name")
         except FileNotFoundError:
             console.print(f"[red]Session not found: {session}[/red]")
             raise typer.Exit(1)
@@ -3853,9 +3855,13 @@ def chat(
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(1)
 
+    # Save original model string for session storage (before resolution)
+    original_model = model
+
     # Initialize configuration from model registry (sets env vars, defaults)
+    # model can be a registry name or LiteLLM string - initialize_ai_config handles both
     model, base_url, api_key, model_display_name = initialize_ai_config(
-        model, base_url, selected_model_name
+        model, base_url, None
     )
 
     async def run_interactive_chat():
@@ -3922,19 +3928,21 @@ def chat(
         else:
             # New session: create JSON session and markdown
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            chat_file = chat_dir / f"chat-{timestamp}-{model_name}.md"
+            # Use display name (sanitized) for filename
+            safe_model_name = model_display_name.replace("/", "-")
+            chat_file = chat_dir / f"chat-{timestamp}-{safe_model_name}.md"
             with open(chat_file, "w", encoding="utf-8") as f:
                 f.write(f"# SearXNG AI Kit Chat Session\n\n")
                 f.write(
                     f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \\n"
                 )
-                f.write(f"**Model:** {model}  \\n")
+                f.write(f"**Model:** {model_display_name}  \\n")
                 f.write(f"**Session:** (pending)  \\n\\n")
                 f.write("---\n\n")
             session_obj = session_store.create(
                 model=model,
                 base_url=base_url,
-                model_name=selected_model_name,
+                model_name=model_display_name,  # Store display name for session resume
                 markdown_path=str(chat_file),
                 title=title,
             )
@@ -4080,7 +4088,7 @@ def chat(
                         messages=messages,
                         model=model,
                         base_url=base_url,
-                        model_name=selected_model_name,
+                        model_name=None,  # Already resolved via initialize_ai_config
                         max_iterations=max_iterations,
                     )
             except KeyboardInterrupt:
@@ -4159,7 +4167,7 @@ def chat(
                             messages=messages,
                             model=model,
                             base_url=base_url,
-                            model_name=selected_model_name,
+                            model_name=None,  # Already resolved via initialize_ai_config
                             max_iterations=max_iterations,
                         )
                 except KeyboardInterrupt:
