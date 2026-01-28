@@ -4556,7 +4556,11 @@ def import_opencode(
     if config_path:
         config_file = Path(config_path).expanduser()
     else:
-        config_file = Path.home() / ".config" / "opencode" / "opencode.jsonc"
+        # Try .jsonc first, then .json
+        config_dir = Path.home() / ".config" / "opencode"
+        config_file = config_dir / "opencode.jsonc"
+        if not config_file.exists():
+            config_file = config_dir / "opencode.json"
 
     if auth_path:
         auth_file = Path(auth_path).expanduser()
@@ -4565,7 +4569,9 @@ def import_opencode(
 
     # Check files exist
     if not config_file.exists():
-        console.print(f"[red]Error: Config file not found: {config_file}[/red]")
+        console.print(f"[red]Error: Config file not found. Tried:[/red]")
+        console.print(f"[red]  - ~/.config/opencode/opencode.jsonc[/red]")
+        console.print(f"[red]  - ~/.config/opencode/opencode.json[/red]")
         raise typer.Exit(1)
 
     if not auth_file.exists():
