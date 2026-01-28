@@ -315,7 +315,11 @@ class ModelManager:
         if api_key:
             model["api_key"] = api_key
         if metadata:
-            model["metadata"] = metadata
+            # Extract source to top-level, keep rest in metadata
+            if "source" in metadata:
+                model["source"] = metadata.pop("source")
+            if metadata:  # Only add metadata if there's still content
+                model["metadata"] = metadata
 
         data["models"][name] = model
 
