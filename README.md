@@ -268,11 +268,14 @@ SearXNG AI Kit includes an AI assistant feature that combines web search capabil
 ### Ask Command (One-Shot Q&A)
 
 ```bash
-# Ask a question using the default o3 model
+# Ask a question using the default model
 searxng ask "What are the latest developments in quantum computing?"
 
-# Use a specific model
-searxng ask "Research renewable energy trends" --model "openai/gpt-4o-mini"
+# Use a model from the registry
+searxng ask "Research renewable energy trends" --model "opencode/big-pickle"
+
+# Use a LiteLLM model string directly
+searxng ask "Explain AI" --model "openai/gpt-4o-mini"
 
 # Get JSON output for programmatic use
 searxng ask "Compare Python vs JavaScript" --format json
@@ -291,10 +294,13 @@ searxng ask < my_research_question.txt
 ### Chat Command (Interactive Conversations)
 
 ```bash
-# Start an interactive chat session
+# Start an interactive chat session (uses default model)
 searxng chat
 
-# Use a specific model for the conversation
+# Use a model from the registry
+searxng chat --model "opencode/glm-4.7"
+
+# Use a LiteLLM model string directly
 searxng chat --model "openai/gpt-4o-mini"
 
 # Use OpenRouter models
@@ -332,9 +338,79 @@ Assistant: [provides clothing recommendations based on the weather information f
 - Format: `chat-YYYY-MM-DD_HH-MM-SS-modelname.md`
 - Example: `chat-2025-06-29_14-30-15-o3.md`
 
+### Model Registry
+
+SearXNG AI Kit uses a model registry to manage AI model configurations. Models from various providers can be imported and used with simple names.
+
+#### List Available Models
+
+```bash
+# List all models in registry
+searxng models list
+
+# Show details for a specific model
+searxng models show "opencode/big-pickle"
+```
+
+#### Set Default Model
+
+```bash
+# Set a default model (used when --model not specified)
+searxng models set-default "opencode/big-pickle"
+
+# Show current default
+searxng models set-default
+```
+
+#### Import from OpenCode
+
+If you use [OpenCode](https://opencode.ai), you can import your configured models:
+
+```bash
+# Preview what would be imported
+searxng models import opencode --dry-run
+
+# Import models from OpenCode config
+searxng models import opencode
+```
+
+This imports models from `~/.config/opencode/opencode.jsonc` and `~/.local/share/opencode/auth.json`.
+
+#### Using Models
+
+```bash
+# Use a model from the registry
+searxng ask "What is quantum computing?" --model "opencode/big-pickle"
+
+# Use with chat
+searxng chat --model "opencode/glm-4.7"
+
+# If default is set, just run without --model
+searxng ask "Explain machine learning"
+```
+
+The `--model` flag accepts:
+- **Registry names**: `opencode/big-pickle`, `cli-proxy-api/claude-sonnet-4`
+- **LiteLLM strings**: `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`
+
+#### Manual Model Management
+
+```bash
+# Add a model manually
+searxng models add "my-model" --type openai --model-id gpt-4o --api-key "sk-..."
+
+# Remove a model
+searxng models remove "my-model"
+
+# Edit models file directly
+searxng models edit
+```
+
+Models are stored in `~/.config/searxng/models.toml`.
+
 ### API Key Configuration
 
-Set one of these environment variables:
+Set one of these environment variables (used when model doesn't have stored API key):
 
 ```bash
 # OpenAI (recommended)
