@@ -4251,6 +4251,9 @@ def model_list_cmd():
 
     default_name = model_manager.get_default_model_name()
     for name, model in models.items():
+        # Skip malformed entries (e.g., orphan metadata sections)
+        if "type" not in model or "model_id" not in model:
+            continue
         is_default = "✓" if name == default_name else ""
         base_url = model.get("base_url", "-")
         table.add_row(name, model["type"], model["model_id"], base_url, is_default)
