@@ -2863,156 +2863,6 @@ async def handle_tool_call(name: str, arguments: dict):
         return json.dumps({"error": f"Unknown tool: {name}"})
 
 
-# Models command group
-models_app = typer.Typer(help="List and manage AI models")
-
-
-def _list_models_impl(
-    refresh: bool = False,
-    json_output: bool = False,
-    source: Optional[str] = None,
-) -> None:
-    """Shared implementation for listing models."""
-    all_models = []
-    model_sources = {}  # Map model -> source
-
-    # Get CLI Proxy API models if enabled and available
-    if cli_proxy_config.is_enabled() and cli_proxy_config.is_cli_proxy_available():
-        config_path = cli_proxy_config.find_cli_proxy_config()
-        if config_path:
-            manager = cli_proxy_config
-            # Start proxy if not running
-            if manager.ensure_running(config_path):
-                proxy_models = manager.get_models(force_refresh=refresh)
-                for m in proxy_models:
-                    prefixed = f"cli-proxy-api/{m}"
-                    all_models.append(prefixed)
-                    model_sources[prefixed] = "CLI Proxy API"
-
-    # Get models from model registry
-    registry_models = model_manager.list_models()
-    for name, model in registry_models.items():
-        # Build the LiteLLM model string for display
-        litellm_model = f"{model['type']}/{model['model_id']}"
-        all_models.append(litellm_model)
-        model_sources[litellm_model] = f"Registry: {name}"
-
-    # Filter by source if requested
-    if source:
-        source_lower = source.lower()
-        if source_lower == "cli-proxy-api":
-            all_models = [m for m in all_models if m.startswith("cli-proxy-api/")]
-        elif source_lower == "registry":
-            all_models = [m for m in all_models if not m.startswith("cli-proxy-api/")]
-
-    # Output
-    if json_output:
-        output = {
-            "models": [
-                {"id": m, "source": model_sources.get(m, "Unknown")}
-                for m in sorted(all_models)
-            ]
-        }
-        print(json.dumps(output, indent=2))
-    else:
-        if not all_models:
-            console.print("[yellow]No models available.[/yellow]")
-            console.print()
-            console.print("[dim]Tips:[/dim]")
-            console.print(
-                "[dim]  - Enable CLI Proxy API: searxng cli-proxy-api enable[/dim]"
-            )
-            console.print(
-                "[dim]  - Add a model: searxng model add <name> <type> <model_id>[/dim]"
-            )
-            console.print(
-                "[dim]  - Import from OpenCode: searxng model import opencode[/dim]"
-            )
-            return
-
-        # Get default model for indicator
-        default_model = global_config.get_default_model()
-
-        table = Table(title="Available Models")
-        table.add_column("Model", style="cyan")
-        table.add_column("Source", style="green")
-        table.add_column("", style="yellow")  # Default indicator
-
-        for model in sorted(all_models):
-            is_default = model == default_model
-            table.add_row(
-                model,
-                model_sources.get(model, "Unknown"),
-                "(default)" if is_default else "",
-            )
-
-        console.print(table)
-        console.print()
-        console.print(f"[dim]Total: {len(all_models)} models[/dim]")
-        if default_model:
-            console.print(f"[dim]Default: {default_model}[/dim]")
-
-
-@models_app.command(name="list")
-def models_list(
-    refresh: bool = typer.Option(False, "--refresh", "-r", help="Refresh model cache"),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-    source: Optional[str] = typer.Option(
-        None, "--source", "-s", help="Filter by source: cli-proxy-api, profile"
-    ),
-):
-    """List available AI models from all sources.
-
-    Shows models available through:
-    - CLI Proxy API (if enabled and configured)
-    - Configured profiles
-    """
-    _list_models_impl(refresh, json_output, source)
-
-
-@models_app.command(name="default")
-def models_default(
-    model: Optional[str] = typer.Argument(
-        None, help="Model to set as default (format: provider/model)"
-    ),
-    clear: bool = typer.Option(False, "--clear", "-c", help="Clear the default model"),
-):
-    """Get or set the default model for AI operations.
-
-    With no arguments, shows the current default model.
-    With a model argument, sets it as the default.
-    With --clear, removes the default model setting.
-
-    Examples:
-        searxng models default                              # Show current
-        searxng models default cli-proxy-api/claude-sonnet-4-5-20250929
-        searxng models default --clear                      # Clear default
-    """
-    _handle_default_model(model, clear, "searxng models default")
-
-
-# Make 'searxng models' without subcommand show the list (default behavior)
-@models_app.callback(invoke_without_command=True)
-def models_callback(
-    ctx: typer.Context,
-    refresh: bool = typer.Option(False, "--refresh", "-r", help="Refresh model cache"),
-    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-    source: Optional[str] = typer.Option(
-        None, "--source", "-s", help="Filter by source: cli-proxy-api, profile"
-    ),
-):
-    """List and manage AI models.
-
-    Without a subcommand, lists available models (same as 'searxng models list').
-    """
-    if ctx.invoked_subcommand is None:
-        _list_models_impl(refresh, json_output, source)
-
-
-# Add models command group to main app
-app.add_typer(models_app, name="models")
-
-
 @app.command()
 def mcp_server(
     remote: bool = typer.Option(
@@ -4345,11 +4195,11 @@ def chat(
     asyncio.run(run_interactive_chat())
 
 
-# Model registry management commands
-model_app = typer.Typer(help="Manage model registry for AI configurations")
+# Models command group (registry management + CLI Proxy API)
+models_app = typer.Typer(help="Manage AI models and configurations")
 
 
-@model_app.command()
+@models_app.command()
 def add(
     name: str = typer.Argument(
         ..., help="Model name (e.g., 'openai/gpt-5' or 'my-model')"
@@ -4378,7 +4228,7 @@ def add(
     model_manager.add_model(name, model_type, model_id, base_url, api_key, force=force)
 
 
-@model_app.command(name="list")
+@models_app.command(name="list")
 def model_list_cmd():
     """List all models in the registry."""
     models = model_manager.list_models()
@@ -4409,13 +4259,13 @@ def model_list_cmd():
     console.print(f"[dim]Models stored in: {model_manager.models_file}[/dim]")
 
 
-@model_app.command()
+@models_app.command()
 def show(name: str = typer.Argument(..., help="Model name")):
     """Show model details."""
     model_manager.show_model(name)
 
 
-@model_app.command()
+@models_app.command()
 def remove(
     name: str = typer.Argument(..., help="Model name"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
@@ -4424,19 +4274,19 @@ def remove(
     model_manager.remove_model(name, force=force)
 
 
-@model_app.command(name="set-default")
+@models_app.command(name="set-default")
 def model_set_default(name: str = typer.Argument(..., help="Model name")):
     """Set default model in registry."""
     model_manager.set_default(name)
 
 
-@model_app.command()
+@models_app.command()
 def edit():
     """Edit the models file using system editor."""
     model_manager.edit_models_file()
 
 
-@model_app.command()
+@models_app.command()
 def test(name: str = typer.Argument(..., help="Model name")):
     """Test a model by making an API call."""
     model_manager.test_model(name)
@@ -4751,7 +4601,7 @@ def import_opencode(
 
 
 # Add import subcommand to model app
-model_app.add_typer(import_app, name="import")
+models_app.add_typer(import_app, name="import")
 
 
 # Shared helper for default model management (used by both config and models commands)
@@ -4839,8 +4689,8 @@ def config_show():
 # Add config command group to main app
 app.add_typer(config_app, name="config")
 
-# Add model command group to main app
-app.add_typer(model_app, name="model")
+# Add models command group to main app
+app.add_typer(models_app, name="models")
 
 
 # CLI Proxy API management commands
@@ -5070,8 +4920,8 @@ def stop_proxy():
         console.print("[yellow]cli-proxy-api is not running[/yellow]")
 
 
-# Add cli-proxy-api command group to main app
-app.add_typer(cli_proxy_app, name="cli-proxy-api")
+# Add cli-proxy-api as subgroup under models
+models_app.add_typer(cli_proxy_app, name="cli-proxy-api")
 
 
 def main():
