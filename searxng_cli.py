@@ -3414,6 +3414,12 @@ def ask(
         "--max-iterations",
         help="Maximum number of tool calling iterations (default: 200)",
     ),
+    plain_text: bool = typer.Option(
+        False,
+        "--plain-text",
+        "-p",
+        help="Disable rich markdown formatting (always plain when piping)",
+    ),
 ):
     """Ask an AI assistant with web search tools (one-shot Q&A). For interactive conversations, use 'searxng chat'."""
     import litellm
@@ -3462,8 +3468,16 @@ def ask(
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             if result["success"]:
-                # Just the response content goes to stdout for piping
-                print(result["response"])
+                response = result["response"]
+                # Use rich markdown formatting if stdout is a tty and not disabled
+                if sys.stdout.isatty() and not plain_text:
+                    from rich.markdown import Markdown
+
+                    stdout_console = Console()
+                    stdout_console.print(Markdown(response))
+                else:
+                    # Plain text for piping or when explicitly requested
+                    print(response)
             else:
                 # Errors go to stderr
                 stderr_console.print(f"[red]Error: {result['error']}[/red]")
