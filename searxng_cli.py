@@ -315,11 +315,15 @@ class ModelManager:
         if api_key:
             model["api_key"] = api_key
         if metadata:
-            # Extract source to top-level, keep rest in metadata
+            # Flatten metadata to top-level fields
             if "source" in metadata:
-                model["source"] = metadata.pop("source")
-            if metadata:  # Only add metadata if there's still content
-                model["metadata"] = metadata
+                model["source"] = metadata["source"]
+            if "display_name" in metadata:
+                model["display_name"] = metadata["display_name"]
+            # Any other metadata fields get added directly
+            for key, value in metadata.items():
+                if key not in ("source", "display_name") and key not in model:
+                    model[key] = value
 
         data["models"][name] = model
 
