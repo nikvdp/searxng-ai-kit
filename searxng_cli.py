@@ -4311,6 +4311,42 @@ import_app = typer.Typer(
 )
 
 
+# Known provider defaults for providers that may only be in auth.json
+# These are Vercel AI SDK community providers with known configurations
+KNOWN_PROVIDERS = {
+    "minimax": {
+        "type": "anthropic",
+        "base_url": "https://api.minimax.io/anthropic",
+        "models": {
+            "MiniMax-M2": {"name": "MiniMax M2"},
+            "MiniMax-M2-Stable": {"name": "MiniMax M2 Stable"},
+        },
+    },
+    "minimax-m2": {
+        "type": "anthropic",
+        "base_url": "https://api.minimax.io/anthropic",
+        "models": {
+            "MiniMax-M2": {"name": "MiniMax M2"},
+            "MiniMax-M2-Stable": {"name": "MiniMax M2 Stable"},
+        },
+    },
+    "zai-coding-plan": {
+        "type": "anthropic",
+        "base_url": "https://api.z.ai/api/anthropic",
+        "models": {
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.7-flash": {"name": "GLM 4.7 Flash"},
+            "glm-4.6": {"name": "GLM 4.6"},
+            "glm-4.6v": {"name": "GLM 4.6 Vision"},
+            "glm-4.5": {"name": "GLM 4.5"},
+            "glm-4.5-air": {"name": "GLM 4.5 Air"},
+            "glm-4.5-flash": {"name": "GLM 4.5 Flash"},
+            "glm-4.5v": {"name": "GLM 4.5 Vision"},
+        },
+    },
+}
+
+
 def _infer_litellm_type(provider_id: str, npm_package: Optional[str]) -> Optional[str]:
     """Infer LiteLLM type from OpenCode provider config.
 
@@ -4343,6 +4379,10 @@ def _infer_litellm_type(provider_id: str, npm_package: Optional[str]) -> Optiona
         return "openrouter"
     elif provider_lower == "moonshotai":
         return "anthropic"  # Moonshot uses anthropic-compatible API
+
+    # Check known providers
+    if provider_id in KNOWN_PROVIDERS:
+        return KNOWN_PROVIDERS[provider_id]["type"]
 
     return None
 
@@ -4555,6 +4595,52 @@ def import_opencode(
             # Check if this is the OpenCode default
             if opencode_default and opencode_default == f"{provider_id}/{model_id}":
                 new_default = name
+
+    # Also check auth.json for known providers that aren't in the config
+    # These are Vercel AI SDK community providers with known configurations
+    for provider_id, auth_entry in auth_data.items():
+        # Skip if already processed from config
+        if provider_id in providers:
+            continue
+
+        # Skip if not a known provider
+        if provider_id not in KNOWN_PROVIDERS:
+            continue
+
+        # Skip if not API auth
+        if auth_entry.get("type") != "api":
+            skipped.append((provider_id, f"OAuth-only (type={auth_entry.get('type')})"))
+            continue
+
+        api_key = auth_entry.get("key")
+        if not api_key:
+            skipped.append((provider_id, "No API key"))
+            continue
+
+        # Get known provider config
+        known_config = KNOWN_PROVIDERS[provider_id]
+        litellm_type = known_config["type"]
+        base_url = known_config["base_url"]
+        models = known_config["models"]
+
+        # Import each model
+        for model_id, model_config in models.items():
+            name = f"{provider_id}/{model_id}"
+
+            metadata = {"source": "opencode"}
+            if model_config.get("name"):
+                metadata["display_name"] = model_config["name"]
+
+            imported.append(
+                {
+                    "name": name,
+                    "type": litellm_type,
+                    "model_id": model_id,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "metadata": metadata,
+                }
+            )
 
     # Output results
     if dry_run:
