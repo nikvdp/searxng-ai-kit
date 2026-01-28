@@ -2487,6 +2487,9 @@ async def ask_ai_async(
             "model": model or "unknown",
         }
 
+    # Print model info early (before any API calls)
+    print(f"[2mUsing model: [0m[2;34m{model}[0m", file=sys.stderr)
+
     # Check for API keys after model config initialization (skip if using cli-proxy-api)
     if api_key is None:  # Standard provider, check env vars
         api_keys = {
@@ -3480,12 +3483,6 @@ def ask(
             max_iterations=max_iterations,
         )
 
-        # Log model info to stderr if successful
-        if result.get("success"):
-            stderr_console.print(
-                f"[dim]Using model: [blue]{result.get('model', 'unknown')}[/blue][/dim]"
-            )
-
         if format_output.lower() == "json":
             # JSON output goes to stdout for piping
             print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -4240,36 +4237,66 @@ def add(
 
 @models_app.command(name="list")
 def model_list_cmd():
-    """List all models in the registry."""
+    """List all models (registry + CLI Proxy API)."""
     models = model_manager.list_models()
-    if not models:
-        console.print("[yellow]No models in registry.[/yellow]")
+
+    # Also get CLI Proxy API models if enabled
+    cli_proxy_models = []
+    if cli_proxy_config.is_enabled() and cli_proxy_config.is_cli_proxy_available():
+        config_path = cli_proxy_config.find_cli_proxy_config()
+        if config_path and cli_proxy_config.ensure_running(config_path):
+            cli_proxy_models = cli_proxy_config.get_models()
+
+    if not models and not cli_proxy_models:
+        console.print("[yellow]No models available.[/yellow]")
         console.print(f"[dim]Models are stored in: {model_manager.models_file}[/dim]")
         console.print()
         console.print(
-            "[dim]Add a model: searxng model add <name> <type> <model_id>[/dim]"
+            "[dim]Add a model: searxng models add <name> <type> <model_id>[/dim]"
         )
-        console.print("[dim]Import from OpenCode: searxng model import opencode[/dim]")
+        console.print("[dim]Import from OpenCode: searxng models import opencode[/dim]")
+        console.print(
+            "[dim]Enable CLI Proxy API: searxng models cli-proxy-api enable[/dim]"
+        )
         return
 
-    table = Table(title="Model Registry")
+    # Get global default
+    global_default = global_config.get_default_model()
+    registry_default = model_manager.get_default_model_name()
+
+    table = Table(title="Available Models")
     table.add_column("Name", style="cyan")
     table.add_column("Type", style="magenta")
     table.add_column("Model ID", style="green")
-    table.add_column("Base URL", style="blue")
+    table.add_column("Source", style="blue")
     table.add_column("Default", style="yellow")
 
-    default_name = model_manager.get_default_model_name()
+    # Add registry models
     for name, model in models.items():
         # Skip malformed entries (e.g., orphan metadata sections)
         if "type" not in model or "model_id" not in model:
             continue
-        is_default = "✓" if name == default_name else ""
-        base_url = model.get("base_url", "-")
-        table.add_row(name, model["type"], model["model_id"], base_url, is_default)
+        is_default = ""
+        if name == registry_default:
+            is_default = "✓ (registry)"
+        table.add_row(
+            name,
+            model["type"],
+            model["model_id"],
+            model.get("source", "registry"),
+            is_default,
+        )
+
+    # Add CLI Proxy API models
+    for model_id in cli_proxy_models:
+        full_name = f"cli-proxy-api/{model_id}"
+        is_default = "✓ (global)" if full_name == global_default else ""
+        table.add_row(full_name, "cli-proxy-api", model_id, "cli-proxy-api", is_default)
 
     console.print(table)
-    console.print(f"[dim]Models stored in: {model_manager.models_file}[/dim]")
+    console.print(f"[dim]Registry: {model_manager.models_file}[/dim]")
+    if cli_proxy_models:
+        console.print(f"[dim]CLI Proxy API: {len(cli_proxy_models)} models[/dim]")
 
 
 @models_app.command()
@@ -4342,6 +4369,28 @@ KNOWN_PROVIDERS = {
             "glm-4.5-air": {"name": "GLM 4.5 Air"},
             "glm-4.5-flash": {"name": "GLM 4.5 Flash"},
             "glm-4.5v": {"name": "GLM 4.5 Vision"},
+        },
+    },
+    "opencode": {
+        "type": "anthropic",
+        "base_url": "https://opencode.ai/zen",
+        "models": {
+            # Anthropic Claude models
+            "claude-opus-4-5": {"name": "Claude Opus 4.5"},
+            "claude-opus-4-1": {"name": "Claude Opus 4.1"},
+            "claude-sonnet-4-5": {"name": "Claude Sonnet 4.5"},
+            "claude-sonnet-4": {"name": "Claude Sonnet 4"},
+            "claude-haiku-4-5": {"name": "Claude Haiku 4.5"},
+            "claude-3-5-haiku": {"name": "Claude 3.5 Haiku"},
+            # Other models via OpenCode Zen
+            "minimax-m2.1": {"name": "MiniMax M2.1"},
+            "kimi-k2.5": {"name": "Kimi K2.5"},
+            "kimi-k2-thinking": {"name": "Kimi K2 Thinking"},
+            "kimi-k2": {"name": "Kimi K2"},
+            "glm-4.7": {"name": "GLM 4.7"},
+            "glm-4.6": {"name": "GLM 4.6"},
+            "qwen3-coder": {"name": "Qwen3 Coder 480B"},
+            "big-pickle": {"name": "Big Pickle (Free)"},
         },
     },
 }
