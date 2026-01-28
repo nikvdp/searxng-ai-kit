@@ -4330,11 +4330,28 @@ def remove(
 
 
 @models_app.command(name="set-default")
-def model_set_default(name: str = typer.Argument(..., help="Model name")):
-    """Set default model for AI operations.
+def model_set_default(
+    name: Optional[str] = typer.Argument(
+        None, help="Model name (omit to show current)"
+    ),
+):
+    """Set or show default model for AI operations.
 
+    When called without arguments, shows the current default model.
     The model can be a registry model name or a cli-proxy-api model.
     """
+    # If no name provided, show current default
+    if name is None:
+        current = global_config.get_default_model()
+        if current:
+            console.print(f"Default model: [green]{current}[/green]")
+        else:
+            console.print("[dim]No default model set.[/dim]")
+            console.print(
+                "[dim]Use 'searxng models set-default <name>' to set one.[/dim]"
+            )
+        return
+
     # Validate the model exists (either in registry or as cli-proxy-api model)
     registry_models = model_manager.list_models()
     is_registry_model = name in registry_models
