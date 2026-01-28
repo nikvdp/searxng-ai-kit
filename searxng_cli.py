@@ -2461,7 +2461,8 @@ async def ask_ai_async(
         }
 
     # Print model info early (before any API calls)
-    print(f"[2mUsing model: [0m[2;34m{model}[0m", file=sys.stderr)
+    stderr_console = Console(file=sys.stderr)
+    stderr_console.print(f"[dim]Using model: [blue]{model}[/blue][/dim]")
 
     # Check for API keys after model config initialization (skip if using cli-proxy-api)
     if api_key is None:  # Standard provider, check env vars
