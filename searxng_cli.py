@@ -1337,18 +1337,11 @@ def _initialize_cli_proxy_config(model: str) -> Tuple[str, str, str]:
     # Handle models that may contain / like "moonshotai/kimi-k2:free"
     actual_model = model[len("cli-proxy-api/") :]
 
-    # Determine the appropriate litellm provider based on model name
-    # Claude models need anthropic/ prefix to use native format and avoid
-    # the proxy_ tool name prefix bug in CLI Proxy API's OpenAI translation
-    if actual_model.startswith("claude"):
-        litellm_model = f"anthropic/{actual_model}"
-        # For anthropic format, base_url should NOT include /v1
-        base_url = manager.get_base_url()
-    else:
-        # Non-Claude models (Gemini, Codex, etc.) use OpenAI-compatible format
-        litellm_model = f"openai/{actual_model}"
-        # OpenAI format needs /v1 suffix
-        base_url = f"{manager.get_base_url()}/v1"
+    # All CLI Proxy API models use anthropic protocol by default
+    # This avoids bugs in CLI Proxy API's OpenAI translation layer
+    # Users can manually add openai variants in models.toml if needed
+    litellm_model = f"anthropic/{actual_model}"
+    base_url = manager.get_base_url()
 
     # Return dummy api_key - proxy handles actual auth
     return litellm_model, base_url, "cli-proxy-api-managed"
@@ -4292,21 +4285,38 @@ def model_list_cmd():
             is_default,
         )
 
-    # Add CLI Proxy API models
+    # Add CLI Proxy API models (all use anthropic protocol by default)
     for model_id in cli_proxy_models:
         full_name = f"cli-proxy-api/{model_id}"
         is_default = "✓" if full_name == global_default else ""
-        table.add_row(full_name, "cli-proxy-api", model_id, "cli-proxy-api", is_default)
+        table.add_row(full_name, "anthropic", model_id, "cli-proxy-api", is_default)
 
     console.print(table)
     console.print(f"[dim]Registry: {model_manager.models_file}[/dim]")
-    if cli_proxy_models:
-        console.print(f"[dim]CLI Proxy API: {len(cli_proxy_models)} models[/dim]")
 
 
 @models_app.command()
 def show(name: str = typer.Argument(..., help="Model name")):
     """Show model details."""
+    # Handle CLI Proxy API models
+    if name.startswith("cli-proxy-api/"):
+        model_id = name[len("cli-proxy-api/") :]
+        # All CLI Proxy API models use anthropic protocol by default
+        protocol = "anthropic"
+        base_url = cli_proxy_config.get_base_url() or "http://localhost:8317"
+
+        global_default = global_config.get_default_model()
+        is_default = name == global_default
+
+        console.print(f"\n[bold]Model:[/bold] {name}")
+        console.print(f"[bold]Protocol:[/bold] {protocol}")
+        console.print(f"[bold]Model ID:[/bold] {model_id}")
+        console.print(f"[bold]Base URL:[/bold] {base_url}")
+        console.print(f"[bold]Source:[/bold] cli-proxy-api")
+        console.print(f"[bold]Default:[/bold] {'Yes' if is_default else 'No'}")
+        return
+
+    # Registry model
     model_manager.show_model(name)
 
 
