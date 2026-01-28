@@ -326,19 +326,8 @@ class ModelManager:
                     model[key] = value
 
         data["models"][name] = model
-
-        # Set as default if it's the first model
-        if not data["settings"].get("default_model"):
-            data["settings"]["default_model"] = name
-
         self._save_models(data)
         console.print(f"[green]Model '{name}' added successfully.[/green]")
-
-        if (
-            not data["settings"].get("default_model")
-            or data["settings"]["default_model"] == name
-        ):
-            console.print(f"[blue]Model '{name}' set as default.[/blue]")
 
     def list_models(self) -> Dict[str, Dict[str, Any]]:
         """List all models from registry."""
@@ -379,29 +368,14 @@ class ModelManager:
             return
 
         del data["models"][name]
-
-        # Clear default if removing default model
-        if data["settings"].get("default_model") == name:
-            data["settings"]["default_model"] = None
-            # Set new default if models remain
-            if data["models"]:
-                new_default = next(iter(data["models"]))
-                data["settings"]["default_model"] = new_default
-                console.print(f"[blue]Model '{new_default}' set as new default.[/blue]")
-
         self._save_models(data)
         console.print(f"[green]Model '{name}' removed.[/green]")
 
-    def set_default(self, name: str):
-        """Set default model."""
-        data = self._load_models()
-        if name not in data["models"]:
-            console.print(f"[red]Model '{name}' not found.[/red]")
-            raise typer.Exit(1)
-
-        data["settings"]["default_model"] = name
-        self._save_models(data)
-        console.print(f"[green]Model '{name}' set as default.[/green]")
+        # Warn if this was the global default
+        if global_config.get_default_model() == name:
+            console.print(
+                f"[yellow]Note: This was the default model. Set a new default with 'searxng models set-default <name>'[/yellow]"
+            )
 
     def get_default_model_name(self) -> Optional[str]:
         """Get the name of the default model."""
@@ -4262,7 +4236,6 @@ def model_list_cmd():
 
     # Get global default
     global_default = global_config.get_default_model()
-    registry_default = model_manager.get_default_model_name()
 
     table = Table(title="Available Models")
     table.add_column("Name", style="cyan")
@@ -4276,9 +4249,7 @@ def model_list_cmd():
         # Skip malformed entries (e.g., orphan metadata sections)
         if "type" not in model or "model_id" not in model:
             continue
-        is_default = ""
-        if name == registry_default:
-            is_default = "✓ (registry)"
+        is_default = "✓" if name == global_default else ""
         table.add_row(
             name,
             model["type"],
@@ -4290,7 +4261,7 @@ def model_list_cmd():
     # Add CLI Proxy API models
     for model_id in cli_proxy_models:
         full_name = f"cli-proxy-api/{model_id}"
-        is_default = "✓ (global)" if full_name == global_default else ""
+        is_default = "✓" if full_name == global_default else ""
         table.add_row(full_name, "cli-proxy-api", model_id, "cli-proxy-api", is_default)
 
     console.print(table)
@@ -4316,8 +4287,22 @@ def remove(
 
 @models_app.command(name="set-default")
 def model_set_default(name: str = typer.Argument(..., help="Model name")):
-    """Set default model in registry."""
-    model_manager.set_default(name)
+    """Set default model for AI operations.
+
+    The model can be a registry model name or a cli-proxy-api model.
+    """
+    # Validate the model exists (either in registry or as cli-proxy-api model)
+    registry_models = model_manager.list_models()
+    is_registry_model = name in registry_models
+    is_cli_proxy_model = name.startswith("cli-proxy-api/")
+
+    if not is_registry_model and not is_cli_proxy_model:
+        console.print(f"[red]Model '{name}' not found in registry.[/red]")
+        console.print("[dim]Use 'searxng models list' to see available models.[/dim]")
+        raise typer.Exit(1)
+
+    global_config.set_default_model(name)
+    console.print(f"[green]Default model set to: {name}[/green]")
 
 
 @models_app.command()
