@@ -116,7 +116,7 @@ COMMON_ENGINES = [
 
 
 # Sessions management sub-app
-sessions_app = typer.Typer(help="Manage chat sessions")
+sessions_app = typer.Typer(help="Manage chat sessions", no_args_is_help=True)
 
 
 @sessions_app.command("list")
@@ -4204,7 +4204,9 @@ def chat(
 
 
 # Models command group (registry management + CLI Proxy API)
-models_app = typer.Typer(help="Manage AI models and configurations")
+models_app = typer.Typer(
+    help="Manage AI models and configurations", no_args_is_help=True
+)
 
 
 @models_app.command()
@@ -4304,7 +4306,9 @@ def test(name: str = typer.Argument(..., help="Model name")):
 
 
 # OpenCode import subcommand group
-import_app = typer.Typer(help="Import models from external sources")
+import_app = typer.Typer(
+    help="Import models from external sources", no_args_is_help=True
+)
 
 
 def _infer_litellm_type(provider_id: str, npm_package: Optional[str]) -> Optional[str]:
@@ -4650,7 +4654,7 @@ def _handle_default_model(
 
 
 # Configuration management commands
-config_app = typer.Typer(help="Manage searxng configuration")
+config_app = typer.Typer(help="Manage searxng configuration", no_args_is_help=True)
 
 
 @config_app.command(name="default-model")
@@ -4705,7 +4709,9 @@ app.add_typer(models_app, name="models")
 
 
 # CLI Proxy API management commands
-cli_proxy_app = typer.Typer(help="Manage CLI Proxy API integration")
+cli_proxy_app = typer.Typer(
+    help="Manage CLI Proxy API integration", no_args_is_help=True
+)
 
 
 @cli_proxy_app.command()
