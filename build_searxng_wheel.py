@@ -104,6 +104,7 @@ def ensure_uv_available():
     print("Please install uv: https://docs.astral.sh/uv/getting-started/installation/")
     sys.exit(1)
 
+
 def create_build_env():
     """Create a temporary build environment using uv with Python 3.11+."""
     print("Creating temporary build environment with uv...")
@@ -123,15 +124,25 @@ def create_build_env():
     env = {
         "UV_CACHE_DIR": cache_dir,
         "UV_DATA_DIR": data_dir,
-        "UV_PYTHON_INSTALL_DIR": data_dir
+        "UV_PYTHON_INSTALL_DIR": data_dir,
     }
     run_command(["uv", "venv", "--python", "3.11", "venv"], cwd=build_env, env=env)
 
     # Determine uv executable path
     if os.name == "nt":
-        uv_run = ["uv", "run", "--env-file", os.path.join(build_env, "venv", "pyvenv.cfg")]
+        uv_run = [
+            "uv",
+            "run",
+            "--env-file",
+            os.path.join(build_env, "venv", "pyvenv.cfg"),
+        ]
     else:
-        uv_run = ["uv", "run", "--env-file", os.path.join(build_env, "venv", "pyvenv.cfg")]
+        uv_run = [
+            "uv",
+            "run",
+            "--env-file",
+            os.path.join(build_env, "venv", "pyvenv.cfg"),
+        ]
 
     # Set VIRTUAL_ENV for uv commands
     venv_path = os.path.join(build_env, "venv")
@@ -142,11 +153,11 @@ def create_build_env():
 def get_searxng_dependencies(searxng_dir):
     """Extract dependencies from SearXNG's requirements.txt."""
     requirements_file = Path(searxng_dir) / "requirements.txt"
-    
+
     if not requirements_file.exists():
         print("ERROR: requirements.txt not found in SearXNG repository")
         sys.exit(1)
-    
+
     deps = []
     with open(requirements_file, "r") as f:
         for line in f:
@@ -154,7 +165,7 @@ def get_searxng_dependencies(searxng_dir):
             # Skip comments and empty lines
             if line and not line.startswith("#"):
                 deps.append(line)
-    
+
     print(f"Found {len(deps)} dependencies in requirements.txt")
     return deps
 
@@ -178,7 +189,7 @@ def install_dependencies(venv_path, searxng_dir):
         "VIRTUAL_ENV": venv_path,
         "UV_CACHE_DIR": cache_dir,
         "UV_DATA_DIR": data_dir,
-        "UV_PYTHON_INSTALL_DIR": data_dir
+        "UV_PYTHON_INSTALL_DIR": data_dir,
     }
 
     print("Installing build dependencies (setuptools, wheel)...")
@@ -193,6 +204,12 @@ def clone_searxng(build_env, commit_hash):
     """Clone SearXNG repository at specific commit."""
     print(f"Cloning SearXNG repository...")
     searxng_dir = os.path.join(build_env, "searxng")
+
+    # On Windows, SearXNG has files with colons in names (e.g., searxng.conf:socket)
+    # which are invalid on NTFS. We need to disable protectNTFS to clone successfully.
+    if sys.platform.startswith("win"):
+        print("Configuring git for Windows compatibility...")
+        run_command(["git", "config", "--global", "core.protectNTFS", "false"])
 
     # Clone repository
     run_command(["git", "clone", SEARXNG_REPO, searxng_dir])
@@ -224,17 +241,19 @@ def build_wheel(venv_path, searxng_dir, output_dir):
         "VIRTUAL_ENV": venv_path,
         "UV_CACHE_DIR": cache_dir,
         "UV_DATA_DIR": data_dir,
-        "UV_PYTHON_INSTALL_DIR": data_dir
+        "UV_PYTHON_INSTALL_DIR": data_dir,
     }
     run_command(
         [
-            "uv", "build",
+            "uv",
+            "build",
             "--wheel",
             "--no-build-isolation",
-            "--out-dir", str(output_dir),
+            "--out-dir",
+            str(output_dir),
             searxng_dir,
         ],
-        env=env
+        env=env,
     )
 
     # Find the generated wheel file
