@@ -86,20 +86,22 @@ jobs:
         PYTHONPATH: .
         GITHUB_ACTIONS: "true"
 
-    - name: Prepare release artifact
+    - name: Prepare release artifact (Unix)
+      if: runner.os != 'Windows'
       run: |
         mkdir -p release
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          cp dist/searxng.exe release/${{ matrix.asset_name }}
-          # Create zip for Windows
-          cd release && zip ${{ matrix.asset_name }}.zip ${{ matrix.asset_name }}
-        else
-          cp dist/searxng release/${{ matrix.asset_name }}
-          chmod +x release/${{ matrix.asset_name }}
-          # Create tar.gz for Unix systems
-          cd release && tar -czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
-        fi
+        cp dist/searxng release/${{ matrix.asset_name }}
+        chmod +x release/${{ matrix.asset_name }}
+        cd release && tar -czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
       shell: bash
+
+    - name: Prepare release artifact (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        New-Item -ItemType Directory -Force -Path release
+        Copy-Item dist/searxng.exe release/${{ matrix.asset_name }}
+        Compress-Archive -Path release/${{ matrix.asset_name }} -DestinationPath release/${{ matrix.asset_name }}.zip
+      shell: pwsh
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4

@@ -1,3 +1,0 @@
-[console_scripts]
-searxng-checker = searx.search.checker.__main__:main
-searxng-run = searx.webapp:run

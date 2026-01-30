@@ -235,3 +235,9 @@ requirements.txt.generated
 
 # Local wheel builds during development
 wheels/
+
+# SearXNG vendored dist-info (extracted from wheel, should not be committed)
+searxng-*.dist-info/
+
+# UV cache
+uv_cache/
