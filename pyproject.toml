@@ -67,6 +67,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["searxng*", "searx*"]
+exclude = ["searx.static*", "searx.templates*", "searx.translations*"]
 
 [tool.setuptools]
 py-modules = ["searxng_cli"]
