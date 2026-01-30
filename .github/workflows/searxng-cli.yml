@@ -27,18 +27,13 @@ jobs:
             arch: x64
             binary_name: searxng.exe
             asset_name: searxng-ai-kit-windows-x64.exe
-          # macos-latest is now ARM64 (M1) by default as of 2024
+          # macos-latest is now ARM64 (M1/M2) by default as of 2024
+          # Intel macOS builds are dropped - macos-13 is retired and macos-15-intel requires paid plan
           - os: macos-latest
             platform: macos
             arch: arm64
             binary_name: searxng
             asset_name: searxng-ai-kit-macos-arm64
-          # Use macos-13 for Intel x64 builds
-          - os: macos-13
-            platform: macos
-            arch: x64
-            binary_name: searxng
-            asset_name: searxng-ai-kit-macos-x64
 
     steps:
     - name: Checkout code
