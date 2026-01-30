@@ -92,23 +92,20 @@ jobs:
         mkdir -p release
         cp dist/searxng release/${{ matrix.asset_name }}
         chmod +x release/${{ matrix.asset_name }}
-        cd release && tar -czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
       shell: bash
 
     - name: Prepare release artifact (Windows)
       if: runner.os == 'Windows'
       run: |
-        New-Item -ItemType Directory -Force -Path release
-        Copy-Item dist/searxng.exe release/${{ matrix.asset_name }}
-        Compress-Archive -Path release/${{ matrix.asset_name }} -DestinationPath release/${{ matrix.asset_name }}.zip
-      shell: pwsh
+        mkdir -p release
+        cp dist/searxng.exe release/${{ matrix.asset_name }}
+      shell: bash
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.asset_name }}
-        path: |
-          release/${{ matrix.asset_name }}*
+        path: release/${{ matrix.asset_name }}
         retention-days: 7
 
   release:
@@ -128,8 +125,8 @@ jobs:
     - name: Prepare release assets
       run: |
         mkdir -p release
-        # Move all artifacts to release directory
-        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "searxng-ai-kit*" \) -exec cp {} release/ \;
+        # Copy binary artifacts
+        find artifacts -type f -name "searxng-ai-kit-*" -exec cp {} release/ \;
         ls -la release/
 
     - name: Generate release notes
