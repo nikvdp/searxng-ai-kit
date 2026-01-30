@@ -27,16 +27,18 @@ jobs:
             arch: x64
             binary_name: searxng.exe
             asset_name: searxng-ai-kit-windows-x64.exe
+          # macos-latest is now ARM64 (M1) by default as of 2024
           - os: macos-latest
-            platform: macos
-            arch: x64
-            binary_name: searxng
-            asset_name: searxng-ai-kit-macos-x64
-          - os: macos-latest-xlarge
             platform: macos
             arch: arm64
             binary_name: searxng
             asset_name: searxng-ai-kit-macos-arm64
+          # Use macos-13 for Intel x64 builds
+          - os: macos-13
+            platform: macos
+            arch: x64
+            binary_name: searxng
+            asset_name: searxng-ai-kit-macos-x64
 
     steps:
     - name: Checkout code
