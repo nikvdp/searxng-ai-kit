@@ -133,7 +133,6 @@ jobs:
         path: |
           dist/*.whl
           pyproject.toml
-          requirements.txt
         retention-days: 30
 
   create-release:
@@ -153,14 +152,17 @@ jobs:
       run: |
         mkdir -p release-assets
         
-        # Copy SearXNG wheel
-        cp searxng-wheel/*.whl release-assets/
-        cp searxng-wheel/build_metadata.json release-assets/
+        # Debug: show what was downloaded
+        echo "=== Downloaded artifacts ==="
+        find . -type f -name "*.whl" -o -name "*.json" -o -name "pyproject.toml" | head -20
         
-        # Copy final package
-        cp searxng-ai-kit-package/*.whl release-assets/
+        # Copy SearXNG wheel
+        cp searxng-wheel/*.whl release-assets/ || cp searxng-wheel/wheels/*.whl release-assets/
+        cp searxng-wheel/build_metadata.json release-assets/ || cp searxng-wheel/wheels/build_metadata.json release-assets/
+        
+        # Copy final package (wheel is in dist/ subdirectory)
+        cp searxng-ai-kit-package/dist/*.whl release-assets/ || cp searxng-ai-kit-package/*.whl release-assets/
         cp searxng-ai-kit-package/pyproject.toml release-assets/generated-pyproject.toml
-        cp searxng-ai-kit-package/requirements.txt release-assets/generated-requirements.txt
         
         ls -la release-assets/
 
@@ -224,8 +226,12 @@ jobs:
 
     - name: Test package installation
       run: |
-        # Install the package
-        pip install package/*.whl
+        # Debug: show what was downloaded
+        echo "=== Downloaded artifacts ==="
+        find package/ -type f | head -20
+        
+        # Install the package (wheel is in dist/ subdirectory)
+        pip install package/dist/*.whl || pip install package/*.whl
         
         # Test basic functionality
         searxng --help
