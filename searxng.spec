@@ -69,7 +69,6 @@ hiddenimports = [
     'lxml.html',
     'httpx',
     'httpx_socks',
-    'uvloop',
     'setproctitle',
     'redis',
     'tomli',
@@ -100,6 +99,10 @@ hiddenimports = [
     'pydantic',
     'pydantic_core',
 ]
+
+# Add uvloop only on non-Windows platforms
+if not sys.platform.startswith('win'):
+    hiddenimports.append('uvloop')
 
 # Add all engine modules
 engine_files = glob.glob('searx/engines/*.py')

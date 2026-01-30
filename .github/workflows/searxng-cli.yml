@@ -60,8 +60,7 @@ jobs:
           echo "Code signing configured"
         else
           echo "No Apple certificate found, skipping code signing"
-          # Disable code signing in spec for unsigned builds
-          sed -i '' "s/codesign_identity='Developer ID Application'/codesign_identity=None/" searxng_cli_universal.spec
+          # Code signing is disabled by default in searxng.spec (uses env vars)
         fi
 
     - name: Set up Python

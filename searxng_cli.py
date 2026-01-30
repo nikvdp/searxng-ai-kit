@@ -263,15 +263,22 @@ class ModelManager:
 
     def _load_models(self) -> Dict[str, Any]:
         """Load models from TOML file."""
+        default = {"models": {}, "settings": {}}
         if not self.models_file.exists():
-            return {"models": {}, "settings": {}}
+            return default
 
         try:
             with open(self.models_file, "rb") as f:
-                return tomllib.load(f)
+                data = tomllib.load(f)
+            # Ensure required keys exist (file might be empty or malformed)
+            if "models" not in data:
+                data["models"] = {}
+            if "settings" not in data:
+                data["settings"] = {}
+            return data
         except Exception as e:
             console.print(f"[red]Error loading models: {e}[/red]")
-            return {"models": {}, "settings": {}}
+            return default
 
     def _save_models(self, data: Dict[str, Any]):
         """Save models to TOML file."""
