@@ -42,7 +42,9 @@ try:
 except Exception:
     pass
 
-# Hidden imports that PyInstaller might miss
+# Hidden imports that PyInstaller might miss.
+# Keep this list minimal so the one-file binary does not pull in large optional
+# ecosystems eagerly at analysis time.
 hiddenimports = [
     'searx',
     'searx.engines',
@@ -70,8 +72,6 @@ hiddenimports = [
     'httpx',
     'httpx_socks',
     'setproctitle',
-    'redis',
-    'tomli',
     'msgspec',
     'typer',
     'rich',
@@ -81,19 +81,6 @@ hiddenimports = [
     'mcp.types',
     'asyncio',
     'litellm',
-    'litellm.completion',
-    'litellm.router',
-    'litellm.proxy',
-    'litellm.exceptions',
-    'litellm.utils',
-    'openai',
-    'anthropic',
-    'google',
-    'google.generativeai',
-    'tokenizers',
-    'tiktoken',
-    'tiktoken_ext',
-    'tiktoken_ext.openai_public',
     'requests',
     'aiohttp',
     'pydantic',
@@ -111,6 +98,24 @@ for engine_file in engine_files:
         module_name = f"searx.engines.{os.path.basename(engine_file)[:-3]}"
         hiddenimports.append(module_name)
 
+excludedimports = [
+    'IPython',
+    'ipykernel',
+    'jupyter_client',
+    'jupyter_core',
+    'matplotlib',
+    'matplotlib_inline',
+    'zmq',
+    'debugpy',
+    'jedi',
+    'pytest',
+    'tkinter',
+    'PySide2',
+    'PySide6',
+    'PyQt5',
+    'PyQt6',
+]
+
 a = Analysis(
     ['searxng_cli.py'],
     pathex=[],
@@ -120,7 +125,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludedimports,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
