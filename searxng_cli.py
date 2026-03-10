@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """SearXNG CLI - Command line interface for SearXNG search engine."""
 
+from __future__ import annotations
+
 import asyncio
+import importlib
 import json
 import logging
 import os
 import sys
+import tomllib
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
@@ -42,19 +46,39 @@ configure_logging()
 # Logger for CLI Proxy API operations
 cli_proxy_log = logging.getLogger("searxng.cli_proxy_api")
 
-# Import vendored SearXNG modules
-import searx
-import searx.engines
-import searx.preferences
-import searx.search
-import searx.webadapter
-from searx.search.models import EngineRef, SearchQuery
-from searx.search.processors import PROCESSORS
-from searx.results import ResultContainer
-from searx.compat import tomllib
 import threading
 from timeit import default_timer
 from uuid import uuid4
+
+
+_SEARX_RUNTIME: Optional[Dict[str, Any]] = None
+
+
+def get_searx_runtime() -> Dict[str, Any]:
+    """Load heavy SearXNG modules lazily for search-related commands only."""
+    global _SEARX_RUNTIME
+
+    if _SEARX_RUNTIME is None:
+        searx_module = importlib.import_module("searx")
+        importlib.import_module("searx.preferences")
+        importlib.import_module("searx.webadapter")
+        engines_module = importlib.import_module("searx.engines")
+        search_module = importlib.import_module("searx.search")
+        models_module = importlib.import_module("searx.search.models")
+        processors_module = importlib.import_module("searx.search.processors")
+        results_module = importlib.import_module("searx.results")
+
+        _SEARX_RUNTIME = {
+            "searx": searx_module,
+            "engines": engines_module,
+            "search": search_module,
+            "EngineRef": models_module.EngineRef,
+            "SearchQuery": models_module.SearchQuery,
+            "PROCESSORS": processors_module.PROCESSORS,
+            "ResultContainer": results_module.ResultContainer,
+        }
+
+    return _SEARX_RUNTIME
 
 app = typer.Typer(
     name="searxng-cli",
@@ -1465,9 +1489,11 @@ def initialize_ai_config(
 class CLISearch:
     """Custom search class that works without Flask context."""
 
-    def __init__(self, search_query: SearchQuery):
+    def __init__(self, search_query: Any):
+        runtime = get_searx_runtime()
+        self.runtime = runtime
         self.search_query = search_query
-        self.result_container = ResultContainer()
+        self.result_container = runtime["ResultContainer"]()
         self.start_time = None
         self.actual_timeout = None
 
@@ -1475,12 +1501,14 @@ class CLISearch:
         """Get search requests for all selected engines."""
         requests = []
         default_timeout = 0
+        processors = self.runtime["PROCESSORS"]
+        searx_module = self.runtime["searx"]
 
         for engineref in self.search_query.engineref_list:
-            if engineref.name not in PROCESSORS:
+            if engineref.name not in processors:
                 continue
 
-            processor = PROCESSORS[engineref.name]
+            processor = processors[engineref.name]
 
             # Skip suspended engines
             if processor.extend_container_if_suspended(self.result_container):
@@ -1495,7 +1523,7 @@ class CLISearch:
             default_timeout = max(default_timeout, processor.engine.timeout)
 
         # Set timeout
-        max_request_timeout = searx.settings["outgoing"]["max_request_timeout"]
+        max_request_timeout = searx_module.settings["outgoing"]["max_request_timeout"]
         actual_timeout = default_timeout
         query_timeout = self.search_query.timeout_limit
 
@@ -1513,9 +1541,10 @@ class CLISearch:
     def search_multiple_requests(self, requests):
         """Execute multiple search requests in parallel."""
         search_id = str(uuid4())
+        processors = self.runtime["PROCESSORS"]
 
         for engine_name, query, request_params in requests:
-            processor = PROCESSORS[engine_name]
+            processor = processors[engine_name]
 
             def _search_wrapper():
                 try:
@@ -1547,7 +1576,7 @@ class CLISearch:
                         th._engine_name, "timeout"
                     )
 
-    def search(self) -> ResultContainer:
+    def search(self) -> Any:
         """Perform the search."""
         self.start_time = default_timer()
 
@@ -1573,8 +1602,9 @@ def json_serial(obj: Any) -> Any:
 def initialize_searx():
     """Initialize SearXNG search system."""
     try:
+        runtime = get_searx_runtime()
         # Use the unified initialize() function (SearXNG API changed upstream)
-        searx.search.initialize()
+        runtime["search"].initialize()
         return True
     except Exception as e:
         console.print(f"[red]Error initializing SearXNG: {e}[/red]")
@@ -1583,8 +1613,9 @@ def initialize_searx():
 
 def get_available_engines() -> Dict[str, List[str]]:
     """Get available engines organized by category."""
+    runtime = get_searx_runtime()
     engines_by_category = {}
-    for name, engine in searx.engines.engines.items():
+    for name, engine in runtime["engines"].engines.items():
         for category in engine.categories:
             if category not in engines_by_category:
                 engines_by_category[category] = []
@@ -1600,7 +1631,7 @@ def create_search_query(
     safe_search: int = 0,
     page: int = 1,
     time_range: Optional[str] = None,
-) -> SearchQuery:
+) -> Any:
     """Create a SearchQuery object."""
 
     # Get available engines for the category
@@ -1630,10 +1661,14 @@ def create_search_query(
     if not target_engines and category_engines:
         target_engines = category_engines[:3]
 
-    # Create EngineRef objects
-    engine_refs = [EngineRef(name, category) for name in target_engines]
+    runtime = get_searx_runtime()
+    engine_ref_cls = runtime["EngineRef"]
+    search_query_cls = runtime["SearchQuery"]
 
-    return SearchQuery(
+    # Create EngineRef objects
+    engine_refs = [engine_ref_cls(name, category) for name in target_engines]
+
+    return search_query_cls(
         query=query,
         engineref_list=engine_refs,
         lang=lang,
