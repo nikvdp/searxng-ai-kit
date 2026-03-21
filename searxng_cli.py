@@ -14,6 +14,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from textwrap import dedent
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 import subprocess
@@ -139,8 +140,225 @@ COMMON_ENGINES = [
 ]
 
 
+SKILL_INSTALL_TARGETS = {
+    "claude": Path.home() / ".claude" / "skills",
+    "codex": Path.home() / ".codex" / "skills",
+    "pi": Path.home() / ".pi" / "agent" / "skills",
+}
+
+
+def _normalize_embedded_text(text: str) -> str:
+    """Return a stable text block for emitted packaged content."""
+    return dedent(text).strip() + "\n"
+
+
+SEARXNG_SEARCH_SKILL_MD = _normalize_embedded_text(
+    """
+    ---
+    name: searxng-search
+    description: Use the searxng CLI for direct web search with explicit categories, engines, and JSON output. Prefer this for fresh search results before synthesis.
+    ---
+
+    # SearXNG Search
+
+    Use `searxng` for direct search. In this repo prefer `uv run searxng ...`.
+    If the CLI is already installed globally, `searxng ...` is equivalent.
+
+    ## Good defaults
+
+    1. Start with JSON when another tool or step will consume the result:
+       `uv run searxng search "site:docs.python.org asyncio TaskGroup" --format json`
+    2. Use human output only when you are reading results directly in the terminal.
+    3. When engine behavior matters, inspect the available surface first:
+       `uv run searxng categories`
+       `uv run searxng engines --common`
+       `uv run searxng engines -c general`
+    4. Narrow engines explicitly when you want more reproducible behavior:
+       `uv run searxng search "postgres advisory locks" --engines duckduckgo,startpage,brave --format json`
+
+    ## Core commands
+
+    - Discover categories:
+      `uv run searxng categories`
+    - List common engines:
+      `uv run searxng engines --common`
+    - List engines for one category:
+      `uv run searxng engines -c general`
+    - Run one search:
+      `uv run searxng search "rust tokio cancellation" --format json`
+    - Compare multiple phrasings or hypotheses:
+      `uv run searxng multi-search "python asyncio queue" "python async queue" --format json --max-results 5`
+
+    ## Search behavior notes
+
+    - `search` forwards the raw query string to SearXNG engines.
+    - Operators like `site:` are engine-dependent. The default `general` engines in this repo usually respect `site:`, but this is not guaranteed across every engine.
+    - Use `--engines` when operator support or ranking behavior matters.
+    - Useful search flags:
+      `--category`, `--engines`, `--disable`, `--lang`, `--safe`, `--page`, `--time`
+    - Prefer `--format json` for agent workflows so the next step can read URLs, titles, snippets, suggestions, and metadata directly.
+
+    ## When to use `multi-search`
+
+    Use `multi-search` when you have multiple independent queries and want them executed in parallel.
+    Good examples:
+
+    - compare alternate phrasings
+    - test broad versus narrow query shapes
+    - search separate subtopics before retrieving source pages
+
+    Do not use it when a single query with a better engine choice would do.
+
+    ## Recommended agent workflow
+
+    1. Inspect categories or engines if needed.
+    2. Run `search` with `--format json`.
+    3. Pick the most relevant result URLs.
+    4. Hand those URLs to `uv run searxng fetch-urls ... --format json`.
+
+    ## Avoid
+
+    - Do not jump to `ask` for basic source gathering.
+    - Do not assume every engine supports every query operator.
+    - Do not rely only on snippet text when the task needs source wording or detailed context.
+    """
+)
+
+SEARXNG_SEARCH_OPENAI_YAML = _normalize_embedded_text(
+    """
+    display_name: SearXNG Search
+    short_description: Direct web search through the local searxng CLI with explicit engine control.
+    default_prompt: Use this skill when you need fresh search results from the searxng CLI before doing synthesis or retrieval.
+    """
+)
+
+SEARXNG_RETRIEVE_SKILL_MD = _normalize_embedded_text(
+    """
+    ---
+    name: searxng-retrieve
+    description: Use the searxng CLI to retrieve readable page content from one or more URLs returned by search or provided directly.
+    ---
+
+    # SearXNG Retrieve
+
+    Use `fetch-urls` to turn URLs into readable content. In this repo prefer `uv run searxng ...`.
+    The command name is plural, but it also works for a single URL.
+
+    ## Good defaults
+
+    1. Search first with JSON:
+       `uv run searxng search "python taskgroup docs" --format json`
+    2. Retrieve the most relevant pages:
+       `uv run searxng fetch-urls "https://docs.python.org/3/library/asyncio-task.html" --format json`
+    3. For multiple pages, pass them all in one call:
+       `uv run searxng fetch-urls "$URL1" "$URL2" "$URL3" --format json`
+
+    ## Retrieval behavior
+
+    - Results preserve input order.
+    - Each result reports its own `success` state.
+    - Successful items usually include `title`, `content`, `url`, and `timestamp`.
+    - Failed items include `error` so you can handle partial failure without losing the whole batch.
+    - Retrieval goes through `https://r.jina.ai/`.
+    - `JINA_API_KEY` is optional and can improve retrieval behavior on supported setups.
+
+    ## Recommended agent workflow
+
+    1. Run `search` with `--format json`.
+    2. Pick a small set of high-value result URLs.
+    3. Fetch them with `fetch-urls`.
+    4. Read `content`, not just the search snippet.
+    5. If a page fails, continue with the successful pages and retry only the failures if needed.
+
+    ## Practical guidance
+
+    - Use this command when you need source-backed details, quotes, or enough context to summarize accurately.
+    - Prefer fetching a few focused pages over dumping large result sets into retrieval.
+    - Keep the pipeline explicit: search first, retrieve second, synthesize last.
+
+    ## Avoid
+
+    - Do not treat search snippets as a substitute for page content.
+    - Do not fetch every result when only the top few are relevant.
+    - Do not make `ask` the primary path when direct search and retrieval will answer the task.
+    """
+)
+
+SEARXNG_RETRIEVE_OPENAI_YAML = _normalize_embedded_text(
+    """
+    display_name: SearXNG Retrieve
+    short_description: Fetch readable page content from URLs with the local searxng CLI.
+    default_prompt: Use this skill after search when you need the contents of result pages, not just snippets.
+    """
+)
+
+PACKAGED_SKILLS = {
+    "searxng-search": {
+        "name": "searxng-search",
+        "description": "direct search workflow with categories, engines, operators, and JSON output",
+        "skill_md": SEARXNG_SEARCH_SKILL_MD,
+        "openai_yaml": SEARXNG_SEARCH_OPENAI_YAML,
+    },
+    "searxng-retrieve": {
+        "name": "searxng-retrieve",
+        "description": "URL retrieval workflow for turning result links into readable source text",
+        "skill_md": SEARXNG_RETRIEVE_SKILL_MD,
+        "openai_yaml": SEARXNG_RETRIEVE_OPENAI_YAML,
+    },
+}
+
+PACKAGED_SKILL_NAMES = list(PACKAGED_SKILLS.keys())
+
+
+def list_packaged_skills() -> List[Dict[str, str]]:
+    """Return packaged skills in a stable display order."""
+    return [PACKAGED_SKILLS[name] for name in PACKAGED_SKILL_NAMES]
+
+
+def get_packaged_skill(name: str) -> Optional[Dict[str, str]]:
+    """Return one packaged skill by name."""
+    return PACKAGED_SKILLS.get(name)
+
+
+def resolve_skill_install_roots(
+    directory: Optional[Path], claude: bool, codex: bool, pi: bool
+) -> List[Path]:
+    """Resolve install roots from explicit and convenience targets."""
+    roots: List[Path] = []
+    if directory is not None:
+        roots.append(directory.expanduser())
+    if claude:
+        roots.append(SKILL_INSTALL_TARGETS["claude"])
+    if codex:
+        roots.append(SKILL_INSTALL_TARGETS["codex"])
+    if pi:
+        roots.append(SKILL_INSTALL_TARGETS["pi"])
+
+    unique_roots: List[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        resolved = root.expanduser()
+        if resolved not in seen:
+            unique_roots.append(resolved)
+            seen.add(resolved)
+    return unique_roots
+
+
+def install_packaged_skill(skill: Dict[str, str], skills_root_dir: Path) -> Path:
+    """Install one packaged skill into a skills root directory."""
+    skill_dir = skills_root_dir / skill["name"]
+    agents_dir = skill_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(skill["skill_md"], encoding="utf-8")
+    (agents_dir / "openai.yaml").write_text(skill["openai_yaml"], encoding="utf-8")
+    return skill_dir
+
+
 # Sessions management sub-app
 sessions_app = typer.Typer(help="Manage chat sessions", no_args_is_help=True)
+skill_app = typer.Typer(
+    help="List, emit, and install packaged searxng skills", no_args_is_help=True
+)
 
 
 @sessions_app.command("list")
@@ -252,6 +470,81 @@ def sessions_rm(
 
 
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(skill_app, name="skill")
+
+
+@skill_app.command("list")
+def skill_list():
+    """List packaged skills embedded in the CLI."""
+    console.print("Packaged skills:")
+    for skill in list_packaged_skills():
+        console.print(f"- {skill['name']}: {skill['description']}")
+
+    console.print("\nConvenience install targets:")
+    console.print(f"- --claude -> {SKILL_INSTALL_TARGETS['claude']}")
+    console.print(f"- --codex  -> {SKILL_INSTALL_TARGETS['codex']}")
+    console.print(f"- --pi     -> {SKILL_INSTALL_TARGETS['pi']}")
+
+
+@skill_app.command("emit")
+def skill_emit(
+    name: str = typer.Argument(..., help="Skill name or 'all'"),
+    output_format: str = typer.Option(
+        "skill-md", "--format", help="Output format: skill-md or openai-yaml"
+    ),
+):
+    """Print packaged skill content."""
+    if output_format not in {"skill-md", "openai-yaml"}:
+        console.print("[red]Invalid --format. Use 'skill-md' or 'openai-yaml'.[/red]")
+        raise typer.Exit(1)
+
+    names = PACKAGED_SKILL_NAMES if name == "all" else [name]
+    rendered_blocks: List[str] = []
+
+    for skill_name in names:
+        skill = get_packaged_skill(skill_name)
+        if skill is None:
+            console.print(f"[red]Unknown skill: {skill_name}[/red]")
+            raise typer.Exit(1)
+
+        content = skill["skill_md"] if output_format == "skill-md" else skill["openai_yaml"]
+        if len(names) > 1:
+            rendered_blocks.append(f"### {skill['name']} ({output_format})\n{content.rstrip()}")
+        else:
+            rendered_blocks.append(content.rstrip())
+
+    sys.stdout.write("\n\n".join(rendered_blocks) + "\n")
+
+
+@skill_app.command("install")
+def skill_install(
+    name: str = typer.Argument("all", help="Skill name or 'all'"),
+    directory: Optional[Path] = typer.Option(
+        None, "--dir", help="Skills directory root that contains skill folders"
+    ),
+    claude: bool = typer.Option(False, "--claude", help="Install to ~/.claude/skills"),
+    codex: bool = typer.Option(False, "--codex", help="Install to ~/.codex/skills"),
+    pi: bool = typer.Option(False, "--pi", help="Install to ~/.pi/agent/skills"),
+):
+    """Install packaged skills into one or more skill roots."""
+    roots = resolve_skill_install_roots(directory, claude, codex, pi)
+    if not roots:
+        console.print(
+            "[red]Specify at least one target with --dir, --claude, --codex, or --pi.[/red]"
+        )
+        raise typer.Exit(1)
+
+    names = PACKAGED_SKILL_NAMES if name == "all" else [name]
+    for root in roots:
+        console.print(f"Installing to {root}")
+        for skill_name in names:
+            skill = get_packaged_skill(skill_name)
+            if skill is None:
+                console.print(f"[red]Unknown skill: {skill_name}[/red]")
+                raise typer.Exit(1)
+
+            installed_dir = install_packaged_skill(skill, root)
+            console.print(f"Installed {skill['name']} -> {installed_dir}")
 
 
 # Model registry for AI model configurations
