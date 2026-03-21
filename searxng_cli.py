@@ -354,6 +354,140 @@ def install_packaged_skill(skill: Dict[str, str], skills_root_dir: Path) -> Path
     return skill_dir
 
 
+def build_agents_md_block(mode: str) -> str:
+    """Build the AGENTS.md-ready onboarding block."""
+    if mode == "short":
+        return _normalize_embedded_text(
+            """
+            ## Use `searxng` For Search And Retrieval
+
+            Use the local `searxng` CLI for fresh search results and page retrieval. In this repo prefer `uv run searxng ...`. If the CLI is installed globally, `searxng ...` is equivalent.
+
+            ### Core loop
+
+            ```bash
+            uv run searxng categories
+            uv run searxng engines --common
+            uv run searxng search "site:docs.python.org asyncio TaskGroup" --format json
+            uv run searxng fetch-urls "https://docs.python.org/3/library/asyncio-task.html" --format json
+            ```
+
+            ### Guidance
+
+            - Prefer `--format json` for agent workflows.
+            - Treat `ask` as optional. The primary workflow is `search` plus `fetch-urls`.
+            - `site:` and similar operators are engine-dependent; the default general engines usually respect them, but not every engine will.
+            - Install the packaged skills instead of rewriting instructions by hand:
+              `searxng skill install searxng-search --codex`
+              `searxng skill install searxng-retrieve --claude`
+            """
+        )
+
+    return _normalize_embedded_text(
+        """
+        ## Use `searxng` For Search And Retrieval
+
+        This repo includes a local `searxng` CLI for direct web search and page retrieval. Prefer it when you need fresh search results, explicit engine control, or readable page content.
+
+        In this repo prefer `uv run searxng ...`.
+        If the CLI is installed globally, `searxng ...` is equivalent.
+
+        ### Search First, Then Retrieve
+
+        ```bash
+        uv run searxng categories
+        uv run searxng engines --common
+        uv run searxng engines -c general
+        uv run searxng search "site:docs.python.org asyncio TaskGroup" --format json
+        uv run searxng search "postgres advisory locks" --engines duckduckgo,startpage,brave --format json
+        uv run searxng multi-search "python asyncio queue" "python async queue" --format json --max-results 5
+        uv run searxng fetch-urls "https://docs.python.org/3/library/asyncio-task.html" --format json
+        uv run searxng fetch-urls "$URL1" "$URL2" "$URL3" --format json
+        ```
+
+        ### Guidance
+
+        - Prefer `--format json` when another tool or agent step will consume the result.
+        - Use `categories` and `engines` before searching when engine choice matters.
+        - Use `--engines` when you want more reproducible behavior or when query operator support matters.
+        - `site:` and similar operators are passed through to engines. The default `general` engines in this repo usually respect them, but support is engine-dependent.
+        - Use `fetch-urls` after search when you need page text, quotes, or source context beyond snippets.
+        - Treat `ask` as optional synthesis. The main workflow is `search` plus `fetch-urls`.
+        - Set `JINA_API_KEY` if you want improved retrieval behavior on supported setups.
+
+        ### Packaged Skills
+
+        Install the packaged skills instead of rewriting instructions by hand:
+
+        ```bash
+        searxng skill list
+        searxng skill install searxng-search --codex
+        searxng skill install searxng-retrieve --claude
+        searxng skill install --pi
+        ```
+
+        Packaged skills in this CLI:
+
+        - `searxng-search`: direct search workflow with engines, categories, operators, and JSON output
+        - `searxng-retrieve`: fetch readable page content from result URLs or known source URLs
+        """
+    )
+
+
+def build_onboard_content(mode: str) -> str:
+    """Build full onboarding content."""
+    agents_md_block = build_agents_md_block(mode)
+    header = _normalize_embedded_text(
+        """
+        # searxng Onboard
+
+        This CLI can emit agent-facing searxng usage guidance and package that guidance as reusable skills.
+
+        ## Use This Output
+
+        Add searxng guidance to your instruction file:
+
+        - Claude Code: `CLAUDE.md`
+        - Other tools: `AGENTS.md`
+
+        Append if the file exists. Create it if needed.
+
+        Raw block for direct append:
+
+        ```bash
+        searxng onboard --agents-md >> AGENTS.md
+        searxng onboard --agents-md --short >> AGENTS.md
+        searxng onboard --agents-md --long >> AGENTS.md
+        ```
+
+        Install packaged skills instead of copy and paste:
+
+        ```bash
+        searxng skill list
+        searxng skill install searxng-search --codex
+        searxng skill install searxng-retrieve --claude
+        searxng skill install --pi
+        ```
+
+        Persistence options:
+
+        - Repo-local: add the block to `./AGENTS.md` or `./CLAUDE.md`
+        - User-global: add it to a global instruction file
+        - Skills: install once to a shared skills directory for reuse
+
+        ---
+        """
+    )
+    footer = _normalize_embedded_text(
+        """
+        ---
+
+        After setup, use `uv run searxng search ... --format json` and `uv run searxng fetch-urls ... --format json` as the default source-gathering path.
+        """
+    )
+    return header + "\n" + agents_md_block.rstrip() + "\n\n" + footer
+
+
 # Sessions management sub-app
 sessions_app = typer.Typer(help="Manage chat sessions", no_args_is_help=True)
 skill_app = typer.Typer(
@@ -545,6 +679,35 @@ def skill_install(
 
             installed_dir = install_packaged_skill(skill, root)
             console.print(f"Installed {skill['name']} -> {installed_dir}")
+
+
+@app.command()
+def onboard(
+    short: bool = typer.Option(False, "--short", help="Use compact onboarding content"),
+    long: bool = typer.Option(False, "--long", help="Use full onboarding content (default)"),
+    agents_md: bool = typer.Option(
+        False, "--agents-md", help="Emit only the AGENTS.md-ready block"
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "-o", "--output", help="Write to a file instead of stdout"
+    ),
+):
+    """Output agent instructions for searxng search and retrieval."""
+    if short and long:
+        console.print("[red]Use only one of --short or --long.[/red]")
+        raise typer.Exit(1)
+
+    mode = "short" if short else "long"
+    content = build_agents_md_block(mode) if agents_md else build_onboard_content(mode)
+
+    if output is not None:
+        output_path = output.expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding="utf-8")
+        console.print(f"Written to {output_path}")
+        return
+
+    sys.stdout.write(content)
 
 
 # Model registry for AI model configurations
