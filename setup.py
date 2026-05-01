@@ -3,13 +3,27 @@
 Setup script with build hooks to automatically build SearXNG wheel.
 """
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from setuptools import setup
+from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py
 from setuptools.command.egg_info import egg_info
+
+SEARXNG_COMMIT = "cba0cffa8fd56bd691e319e3069fb02b4212a4df"
+
+
+def resolve_searxng_commit():
+    """Resolve the SearXNG commit used for reproducible wheel builds."""
+    override = os.environ.get("SEARXNG_COMMIT")
+    if override:
+        print(f"Using SearXNG commit from SEARXNG_COMMIT: {override}")
+        return override
+
+    print(f"Using pinned SearXNG commit: {SEARXNG_COMMIT}")
+    return SEARXNG_COMMIT
 
 
 class BuildSearXNGWheel:
@@ -19,12 +33,14 @@ class BuildSearXNGWheel:
         """Build SearXNG wheel if needed."""
         script_dir = Path(__file__).parent
         wheels_dir = script_dir / "wheels"
+        expected_commit = resolve_searxng_commit()
 
-        # Check if we already have a wheel
-        existing_wheels = list(wheels_dir.glob("searxng-*.whl"))
-        if existing_wheels:
-            print(f"✓ Using existing SearXNG wheel: {existing_wheels[0].name}")
-            wheel_file = existing_wheels[0]
+        # Check if we already have a wheel for the pinned commit.
+        wheel_file = self.find_matching_searxng_wheel(wheels_dir, expected_commit)
+        if wheel_file:
+            print(
+                f"✓ Using existing SearXNG wheel for {expected_commit}: {wheel_file.name}"
+            )
         else:
             print("🔧 Building SearXNG wheel...")
 
@@ -35,21 +51,25 @@ class BuildSearXNGWheel:
                 return
 
             try:
+                env = os.environ.copy()
+                env["SEARXNG_COMMIT"] = expected_commit
                 result = subprocess.run(
                     [sys.executable, str(build_script)],
                     cwd=script_dir,
                     capture_output=True,
                     text=True,
                     check=True,
+                    env=env,
                 )
                 print("✓ SearXNG wheel built successfully")
 
                 # Find the generated wheel
-                new_wheels = list(wheels_dir.glob("searxng-*.whl"))
-                if not new_wheels:
+                wheel_file = self.find_matching_searxng_wheel(
+                    wheels_dir, expected_commit
+                )
+                if not wheel_file:
                     print("Warning: No wheel file found after build")
                     return
-                wheel_file = new_wheels[0]
 
             except subprocess.CalledProcessError as e:
                 print(f"Error building SearXNG wheel:")
@@ -58,7 +78,55 @@ class BuildSearXNGWheel:
                 return
 
         # Extract and vendor SearXNG modules into our package
-        self.extract_and_vendor_searxng(wheel_file)
+        if self.extract_and_vendor_searxng(wheel_file):
+            self.refresh_package_discovery()
+
+    def find_matching_searxng_wheel(self, wheels_dir, expected_commit):
+        """Return an existing wheel only when metadata matches the pinned commit."""
+        metadata_file = wheels_dir / "build_metadata.json"
+        if not metadata_file.exists():
+            stale_wheels = list(wheels_dir.glob("searxng-*.whl"))
+            if stale_wheels:
+                print("Ignoring local SearXNG wheels without build metadata")
+            return None
+
+        try:
+            metadata = json.loads(metadata_file.read_text())
+        except json.JSONDecodeError:
+            print("Ignoring local SearXNG wheel metadata that is not valid JSON")
+            return None
+
+        metadata_commit = metadata.get("searxng_commit")
+        wheel_name = metadata.get("wheel_file")
+        if metadata_commit != expected_commit:
+            print(
+                "Ignoring local SearXNG wheel for "
+                f"{metadata_commit}; pinned commit is {expected_commit}"
+            )
+            return None
+
+        if not wheel_name:
+            print("Ignoring local SearXNG wheel metadata without wheel_file")
+            return None
+
+        wheel_file = wheels_dir / wheel_name
+        if not wheel_file.exists():
+            print(f"Ignoring missing SearXNG wheel from metadata: {wheel_name}")
+            return None
+
+        return wheel_file
+
+    def refresh_package_discovery(self):
+        """Refresh setuptools package discovery after vendoring SearXNG."""
+        script_dir = Path(__file__).parent
+        packages = find_packages(
+            where=str(script_dir),
+            include=["searxng*", "searx*"],
+            exclude=["searx.static*", "searx.templates*", "searx.translations*"],
+        )
+        self.distribution.packages = packages
+        if hasattr(self, "packages"):
+            self.packages = packages
 
     def install_searxng_wheel(self, wheel_file):
         """Install SearXNG wheel directly into the current environment."""

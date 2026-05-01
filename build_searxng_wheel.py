@@ -10,6 +10,7 @@ This script uses uv to:
 """
 
 import os
+import argparse
 import shutil
 import subprocess
 import sys
@@ -21,8 +22,7 @@ from pathlib import Path
 
 # SearXNG git repository and commit hash
 SEARXNG_REPO = "https://github.com/searxng/searxng.git"
-# SEARXNG_COMMIT will be fetched dynamically as latest commit
-SEARXNG_COMMIT = None  # Will be set to latest commit
+SEARXNG_COMMIT = "cba0cffa8fd56bd691e319e3069fb02b4212a4df"
 
 
 def run_command(cmd, cwd=None, check=True, env=None):
@@ -56,6 +56,56 @@ def fetch_latest_commit():
     commit_hash = result.stdout.strip().split("\t")[0]
     print(f"Latest SearXNG commit: {commit_hash}")
     return commit_hash
+
+
+def resolve_searxng_commit():
+    """Resolve the SearXNG commit used for reproducible wheel builds."""
+    override = os.environ.get("SEARXNG_COMMIT")
+    if override:
+        print(f"Using SearXNG commit from SEARXNG_COMMIT: {override}")
+        return override
+
+    if SEARXNG_COMMIT:
+        print(f"Using pinned SearXNG commit: {SEARXNG_COMMIT}")
+        return SEARXNG_COMMIT
+
+    return fetch_latest_commit()
+
+
+def resolve_searxng_ref(ref):
+    """Resolve a SearXNG ref or commit to a full commit hash."""
+    if len(ref) == 40 and all(ch in "0123456789abcdefABCDEF" for ch in ref):
+        return ref.lower()
+
+    candidates = [ref, f"refs/heads/{ref}", f"refs/tags/{ref}"]
+    result = run_command(["git", "ls-remote", SEARXNG_REPO, *candidates])
+    matches = [line.split("\t", 1)[0] for line in result.stdout.splitlines() if line]
+    if not matches:
+        print(f"ERROR: Could not resolve SearXNG ref: {ref}")
+        sys.exit(1)
+
+    commit_hash = matches[0]
+    print(f"Resolved SearXNG ref {ref} to {commit_hash}")
+    return commit_hash
+
+
+def write_pinned_commit(commit_hash):
+    """Persist the tested SearXNG commit in this build script."""
+    update_pin_in_file(Path(__file__), commit_hash)
+    update_pin_in_file(Path(__file__).parent / "setup.py", commit_hash)
+    print(f"Updated pinned SearXNG commit to: {commit_hash}")
+
+
+def update_pin_in_file(path, commit_hash):
+    """Replace the SEARXNG_COMMIT assignment in a Python source file."""
+    content = path.read_text()
+    old = f'SEARXNG_COMMIT = "{SEARXNG_COMMIT}"'
+    new = f'SEARXNG_COMMIT = "{commit_hash}"'
+    if old not in content:
+        print(f"ERROR: Could not find SEARXNG_COMMIT assignment in {path}")
+        sys.exit(1)
+
+    path.write_text(content.replace(old, new, 1))
 
 
 def calculate_wheel_hash(wheel_path):
@@ -267,8 +317,25 @@ def build_wheel(venv_path, searxng_dir, output_dir):
     return wheel_file
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Build and pin the vendored SearXNG wheel used by searxng-ai-kit."
+    )
+    parser.add_argument(
+        "--commit",
+        help="SearXNG commit or ref to build without changing the pinned commit.",
+    )
+    parser.add_argument(
+        "--update-pin",
+        metavar="REF",
+        help="Resolve REF, update the pinned SearXNG commit, and build that wheel.",
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main build process."""
+    args = parse_args()
     print("SearXNG Wheel Builder")
     print("=" * 50)
 
@@ -277,13 +344,19 @@ def main():
     output_dir = script_dir / "wheels"
 
     try:
-        # Fetch latest commit hash
-        commit_hash = fetch_latest_commit()
+        # Resolve pinned, overridden, or intentionally updated commit hash
+        if args.update_pin:
+            commit_hash = resolve_searxng_ref(args.update_pin)
+            write_pinned_commit(commit_hash)
+        elif args.commit:
+            commit_hash = resolve_searxng_ref(args.commit)
+        else:
+            commit_hash = resolve_searxng_commit()
 
         # Create build environment with uv
         build_env, venv_path = create_build_env()
 
-        # Clone SearXNG at latest commit first (need it to get dependencies)
+        # Clone SearXNG at the resolved commit first (need it to get dependencies)
         searxng_dir = clone_searxng(build_env, commit_hash)
 
         # Install dependencies from SearXNG's requirements.txt using uv

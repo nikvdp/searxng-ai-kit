@@ -11,7 +11,7 @@
 # For CI builds: make ci-build (runs all steps)
 
 .PHONY: help install sync dev test build clean run search ask chat models mcp-server
-.PHONY: build-wheel generate-config dev-setup ci-build ci-test build-verify
+.PHONY: build-wheel update-searxng-pin generate-config dev-setup ci-build ci-test build-verify
 
 PYTHON := python3
 UV := uv
@@ -30,6 +30,7 @@ help:
 	@echo ""
 	@echo "Build Steps (for understanding):"
 	@echo "  make build-wheel     - Build SearXNG wheel from upstream"
+	@echo "  make update-searxng-pin REF=master - Pin and build a tested upstream SearXNG ref"
 	@echo "  make generate-config - Generate pyproject.toml with wheel URL"
 	@echo ""
 	@echo "Running:"
@@ -60,10 +61,18 @@ help:
 # Build the SearXNG wheel from upstream repository
 build-wheel:
 	@echo "=== Building SearXNG wheel from upstream ==="
-	$(UV) run $(PYTHON) build_searxng_wheel.py
+	UV_NO_CONFIG=1 $(UV) run --no-project $(PYTHON) build_searxng_wheel.py
 	@echo ""
 	@echo "Wheel built successfully. Check $(WHEEL_DIR)/"
 	@ls -la $(WHEEL_DIR)/*.whl 2>/dev/null || echo "No wheel found"
+
+# Intentionally move to a new upstream SearXNG ref, then rebuild local metadata.
+update-searxng-pin:
+	@test -n "$(REF)" || (echo "Usage: make update-searxng-pin REF=master" >&2; exit 1)
+	@echo "=== Updating pinned SearXNG ref: $(REF) ==="
+	UV_NO_CONFIG=1 $(UV) run --no-project $(PYTHON) build_searxng_wheel.py --update-pin "$(REF)"
+	UV_NO_CONFIG=1 $(UV) lock
+	UV_NO_CONFIG=1 $(UV) sync --no-dev
 
 # Generate pyproject.toml and requirements.txt from templates
 # For local dev, uses file:// URL; for CI, uses GitHub release URL
