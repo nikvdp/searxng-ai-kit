@@ -2052,6 +2052,9 @@ def json_serial(obj: Any) -> Any:
         return obj.decode("utf8")
     if isinstance(obj, set):
         return list(obj)
+    as_dict = getattr(obj, "as_dict", None)
+    if callable(as_dict):
+        return as_dict()
     raise TypeError(f"Type ({type(obj)}) not serializable")
 
 
