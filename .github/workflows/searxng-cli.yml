@@ -56,6 +56,7 @@ jobs:
           rm -rf target/pybin
           chmod +x "$executable_path"
           PYBIN_CACHE_DIR="$(mktemp -d)" "$executable_path" --help
+          PYBIN_CACHE_DIR="$(mktemp -d)" "$executable_path" search "openai" --format json >/dev/null
 
   release:
     name: Publish GitHub release
