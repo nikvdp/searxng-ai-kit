@@ -2044,17 +2044,47 @@ class CLISearch:
         return self.result_container
 
 
+def make_json_safe(value: Any) -> Any:
+    """Convert SearXNG result objects into plain JSON-safe Python values."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf8")
+    if isinstance(value, dict):
+        return {
+            str(key): make_json_safe(item)
+            for key, item in value.items()
+            if key != "parsed_url"
+        }
+
+    as_dict = getattr(value, "as_dict", None)
+    if callable(as_dict):
+        return make_json_safe(as_dict())
+
+    if isinstance(value, set):
+        items = [make_json_safe(item) for item in value]
+        try:
+            return sorted(items)
+        except TypeError:
+            return items
+
+    if isinstance(value, (list, tuple)):
+        return [make_json_safe(item) for item in value]
+
+    return value
+
+
 def json_serial(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default json code."""
+    safe_value = make_json_safe(obj)
+    if safe_value is not obj:
+        return safe_value
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, bytes):
         return obj.decode("utf8")
     if isinstance(obj, set):
         return list(obj)
-    as_dict = getattr(obj, "as_dict", None)
-    if callable(as_dict):
-        return as_dict()
     raise TypeError(f"Type ({type(obj)}) not serializable")
 
 
@@ -2260,17 +2290,12 @@ def search(
                 "timerange": search_query.time_range,
                 "category": category,
             },
-            "results": result_container.get_ordered_results(),
-            "infoboxes": result_container.infoboxes,
-            "suggestions": list(result_container.suggestions),
-            "answers": list(result_container.answers),
+            "results": make_json_safe(result_container.get_ordered_results()),
+            "infoboxes": make_json_safe(result_container.infoboxes),
+            "suggestions": make_json_safe(list(result_container.suggestions)),
+            "answers": make_json_safe(list(result_container.answers)),
             "number_of_results": result_container.number_of_results,
         }
-
-        # Remove parsed_url from results for cleaner output
-        for result in results_dict["results"]:
-            if "parsed_url" in result:
-                del result["parsed_url"]
 
         # Output results
         if output_format.lower() == "json":
@@ -2533,11 +2558,13 @@ async def perform_search_async(
         result_container = CLISearch(search_query).search()
 
         # Get results
-        results = result_container.get_ordered_results()[:max_results]
+        results = make_json_safe(result_container.get_ordered_results()[:max_results])
 
         # Clean up results for JSON serialization
         clean_results = []
         for result in results:
+            if not isinstance(result, dict):
+                continue
             clean_result = {
                 "title": result.get("title", ""),
                 "url": result.get("url", ""),
@@ -2552,7 +2579,7 @@ async def perform_search_async(
             "category": category,
             "engines_used": [ref.name for ref in search_query.engineref_list],
             "results": clean_results,
-            "suggestions": list(result_container.suggestions),
+            "suggestions": make_json_safe(list(result_container.suggestions)),
             "number_of_results": result_container.number_of_results,
         }
 
