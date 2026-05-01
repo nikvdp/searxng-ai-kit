@@ -37,7 +37,7 @@ jobs:
           entrypoint: searxng
           python: "3.12"
           output: ${{ matrix.asset_name }}
-          pybin-version: "v0.1.1"
+          pybin-version: "v0.1.2"
           upload-artifact: "true"
           artifact-name: ${{ matrix.asset_name }}
 
@@ -53,8 +53,9 @@ jobs:
             *) executable_path="./$executable_path" ;;
           esac
 
+          rm -rf target/pybin
           chmod +x "$executable_path"
-          "$executable_path" --help
+          PYBIN_CACHE_DIR="$(mktemp -d)" "$executable_path" --help
 
   release:
     name: Publish GitHub release
