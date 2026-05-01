@@ -1,226 +1,80 @@
 name: SearXNG AI Kit
 
 on:
-  push:
-    branches: [ main, master ]
-    tags:
-      - 'v*'
   pull_request:
-    branches: [ main, master ]
+    branches: [master]
+  push:
+    branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build AI Kit (${{ matrix.platform }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            platform: linux
-            arch: x64
-            binary_name: searxng
+          - runner: ubuntu-24.04
             asset_name: searxng-ai-kit-linux-x64
-          - os: windows-latest
-            platform: windows
-            arch: x64
-            binary_name: searxng.exe
-            asset_name: searxng-ai-kit-windows-x64.exe
-          # macos-latest is now ARM64 (M1/M2) by default as of 2024
-          # Intel macOS builds are dropped - macos-13 is retired and macos-15-intel requires paid plan
-          - os: macos-latest
-            platform: macos
-            arch: arm64
-            binary_name: searxng
+          - runner: ubuntu-24.04-arm
+            asset_name: searxng-ai-kit-linux-arm64
+          - runner: macos-14
             asset_name: searxng-ai-kit-macos-arm64
+          - runner: windows-latest
+            asset_name: searxng-ai-kit-windows-x64.exe
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v5
 
-    - name: Setup Code Signing (macOS)
-      if: runner.os == 'macOS'
-      env:
-        APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-      run: |
-        if [ -n "$APPLE_CERTIFICATE" ]; then
-          echo "Setting up code signing..."
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          echo "Code signing configured"
-        else
-          echo "No Apple certificate found, skipping code signing"
-          # Code signing is disabled by default in searxng.spec (uses env vars)
-        fi
+      - name: Build standalone binary
+        id: pybin
+        uses: nikvdp/setup-pybin@v1
+        with:
+          entrypoint: searxng
+          output: ${{ matrix.asset_name }}
+          upload-artifact: "true"
+          artifact-name: ${{ matrix.asset_name }}
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Smoke test binary on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    - name: Install UV
-      run: |
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-          echo "$env:USERPROFILE\.cargo\bin" >> $GITHUB_PATH
-        else
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        fi
-      shell: bash
+          chmod +x "${{ steps.pybin.outputs.executable-path }}"
+          "${{ steps.pybin.outputs.executable-path }}" --help
 
-    - name: Build with Makefile
-      run: make ci-build
-      shell: bash
-      env:
-        PYTHONPATH: .
-        GITHUB_ACTIONS: "true"
+      - name: Smoke test binary on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
 
-    - name: Prepare release artifact (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        mkdir -p release
-        cp dist/searxng release/${{ matrix.asset_name }}
-        chmod +x release/${{ matrix.asset_name }}
-      shell: bash
-
-    - name: Prepare release artifact (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        mkdir -p release
-        cp dist/searxng.exe release/${{ matrix.asset_name }}
-      shell: bash
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.asset_name }}
-        path: release/${{ matrix.asset_name }}
-        retention-days: 7
+          & "${{ steps.pybin.outputs.executable-path }}" --help
 
   release:
+    name: Publish GitHub release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    
+    permissions:
+      contents: write
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
 
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-
-    - name: Prepare release assets
-      run: |
-        mkdir -p release
-        # Copy binary artifacts
-        find artifacts -type f -name "searxng-ai-kit-*" -exec cp {} release/ \;
-        ls -la release/
-
-    - name: Generate release notes
-      id: release_notes
-      run: |
-        cat > release_notes.md << 'EOF'
-        # SearXNG AI Kit Release ${{ github.ref_name }}
-        
-        An AI-powered command-line search tool powered by SearXNG with intelligent research capabilities.
-        
-        ## Features
-        - AI-powered research with web search capabilities
-        - Search across 180+ search engines
-        - LLM integration with function calling (OpenAI, Anthropic, Google)
-        - MCP server for AI assistant integration
-        - Support for multiple output formats (human-readable and JSON)
-        - Engine selection and filtering
-        - Category-based searching
-        - Cross-platform support
-        
-        ## Download
-        Choose the appropriate binary for your platform:
-        
-        - **Linux (x64)**: `searxng-ai-kit-linux-x64.tar.gz`
-        - **Windows (x64)**: `searxng-ai-kit-windows-x64.exe.zip` 
-        - **macOS (Intel)**: `searxng-ai-kit-macos-x64.tar.gz`
-        - **macOS (Apple Silicon)**: `searxng-ai-kit-macos-arm64.tar.gz`
-        
-        ## Quick Start
-        ```bash
-        # Extract the binary (Linux/macOS)
-        tar -xzf searxng-ai-kit-*.tar.gz
-        
-        # Make executable and run
-        chmod +x searxng-ai-kit
-        ./searxng-ai-kit search "your query here"
-        
-        # See all options
-        ./searxng-ai-kit --help
-        ```
-        
-        ## Usage Examples
-        ```bash
-        # AI-powered research
-        ./searxng-ai-kit chat "What are the latest developments in quantum computing?"
-        
-        # Basic search
-        ./searxng-ai-kit search "python tutorial"
-        
-        # Search with specific engines
-        ./searxng-ai-kit search "machine learning" --engines duckduckgo,startpage
-        
-        # JSON output for scripting
-        ./searxng-ai-kit search "data science" --format json
-        
-        # List available engines
-        ./searxng-ai-kit engines --common
-        ```
-        
-        Built with ❤️ using SearXNG, Python, and PyInstaller.
-        EOF
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: SearXNG AI Kit ${{ github.ref_name }}
-        body_path: release_notes.md
-        draft: false
-        prerelease: false
-        files: |
-          release/*
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-  test:
-    name: Test AI Kit Build
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
-    
-    steps:
-    - name: Download Linux artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: searxng-ai-kit-linux-x64
-        path: test
-        
-    - name: Test AI Kit functionality
-      run: |
-        cd test
-        tar -xzf searxng-ai-kit-linux-x64.tar.gz
-        chmod +x searxng-ai-kit-linux-x64
-        echo "Testing help command..."
-        ./searxng-ai-kit-linux-x64 --help
-        echo "Testing engines command..."
-        ./searxng-ai-kit-linux-x64 engines --common || echo "Engines test failed but continuing"
-        echo "AI Kit functionality test completed"
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*
