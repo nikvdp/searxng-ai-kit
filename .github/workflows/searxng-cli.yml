@@ -25,8 +25,6 @@ jobs:
             asset_name: searxng-ai-kit-linux-arm64
           - runner: macos-14
             asset_name: searxng-ai-kit-macos-arm64
-          - runner: windows-latest
-            asset_name: searxng-ai-kit-windows-x64.exe
 
     steps:
       - name: Check out repository
@@ -57,19 +55,6 @@ jobs:
 
           chmod +x "$executable_path"
           "$executable_path" --help
-
-      - name: Smoke test binary on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $executablePath = "${{ steps.pybin.outputs.executable-path }}"
-          if (-not [System.IO.Path]::IsPathRooted($executablePath) -and $executablePath -notmatch "[/\\]") {
-            $executablePath = ".\$executablePath"
-          }
-
-          & $executablePath --help
 
   release:
     name: Publish GitHub release
