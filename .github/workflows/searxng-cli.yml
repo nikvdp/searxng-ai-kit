@@ -37,7 +37,9 @@ jobs:
         uses: nikvdp/setup-pybin@v1
         with:
           entrypoint: searxng
+          python: "3.12"
           output: ${{ matrix.asset_name }}
+          pybin-version: "v0.1.0"
           upload-artifact: "true"
           artifact-name: ${{ matrix.asset_name }}
 
