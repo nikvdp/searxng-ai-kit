@@ -49,8 +49,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          chmod +x "${{ steps.pybin.outputs.executable-path }}"
-          "${{ steps.pybin.outputs.executable-path }}" --help
+          executable_path="${{ steps.pybin.outputs.executable-path }}"
+          case "$executable_path" in
+            /*|*/*) ;;
+            *) executable_path="./$executable_path" ;;
+          esac
+
+          chmod +x "$executable_path"
+          "$executable_path" --help
 
       - name: Smoke test binary on Windows
         if: runner.os == 'Windows'
@@ -58,7 +64,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          & "${{ steps.pybin.outputs.executable-path }}" --help
+          $executablePath = "${{ steps.pybin.outputs.executable-path }}"
+          if (-not [System.IO.Path]::IsPathRooted($executablePath) -and $executablePath -notmatch "[/\\]") {
+            $executablePath = ".\$executablePath"
+          }
+
+          & $executablePath --help
 
   release:
     name: Publish GitHub release
