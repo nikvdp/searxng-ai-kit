@@ -10,39 +10,58 @@ An AI-enhanced command-line interface, Python library, and MCP server for the Se
 🤖 **AI chat** - Ask questions and get comprehensive research using 180+ search engines  
 🐍 **Python library** - Programmatic search and AI-powered content retrieval  
 🔌 **MCP server** - AI assistant integration with advanced research tools  
-📦 **Standalone binaries** - Pre-built executables for Linux, Windows, and macOS  
+📦 **Standalone binaries** - Pre-built executables for Linux and macOS  
 
 ## Installation
 
-### Prerequisites
+### Download a Standalone Binary (Recommended)
+
+The recommended install path is to download the pre-built binary for your
+platform from the
+[GitHub releases page](https://github.com/nikvdp/searxng-ai-kit/releases).
+
+The source install path has to build and vendor a pinned SearXNG wheel before
+the CLI can run, so it is slower and more involved than a normal `uv tool
+install`. Use the binary unless you are developing the project or intentionally
+updating the pinned upstream SearXNG version.
+
+Release binaries are currently published for Linux and macOS. Windows binaries
+are disabled for now because the current pybin Windows package launcher is not
+native yet.
+
+After downloading, make the binary executable and put it somewhere on your
+`PATH`:
+
+```bash
+chmod +x searxng-ai-kit-*
+./searxng-ai-kit-* --help
+```
+
+### Install from Source with uv (Advanced)
+
+Use this path when you want to develop the project, inspect the vendored SearXNG
+build, or update the pinned SearXNG commit.
+
+Prerequisites:
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (recommended)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-### Install with uv (Recommended)
+```bash
+# On macOS and Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-1. **Install uv:**
-   ```bash
-   # On macOS and Linux
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   # On Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
+git clone https://github.com/nikvdp/searxng-ai-kit
+cd searxng-ai-kit
 
-2. **Build and install:**
-   ```bash
-   git clone https://github.com/nikvdp/searxng-ai-kit
-   cd searxng-ai-kit
+# Build the pinned SearXNG wheel and set up the local environment
+uv run python dev-setup.py
 
-   # Build wheel and set up development environment
-   python dev-setup.py
+# Install as a uv tool
+uv tool install .
 
-   # Install as tool
-   uv tool install .
-   ```
-
-3. **Verify:**
-   ```bash
-   searxng --help
-   ```
+# Verify
+searxng --help
+```
 
 ### Development Setup
 
