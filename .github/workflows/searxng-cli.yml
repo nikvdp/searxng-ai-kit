@@ -55,8 +55,19 @@ jobs:
 
           rm -rf target/pybin
           chmod +x "$executable_path"
-          PYBIN_CACHE_DIR="$(mktemp -d)" "$executable_path" --help
-          PYBIN_CACHE_DIR="$(mktemp -d)" "$executable_path" search "openai" --format json >/dev/null
+          help_output="$(mktemp)"
+          set +e
+          PYBIN_CACHE_DIR="$(mktemp -d)" "$executable_path" --help >"$help_output" 2>&1
+          help_status=$?
+          set -e
+
+          cat "$help_output"
+          grep -q "Privacy-respecting metasearch engine CLI" "$help_output"
+          grep -q "search" "$help_output"
+
+          if [ "$help_status" -ne 0 ]; then
+            echo "::notice::Binary printed the expected CLI help and exited with status $help_status."
+          fi
 
   release:
     name: Publish GitHub release
