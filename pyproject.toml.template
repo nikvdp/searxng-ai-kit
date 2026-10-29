@@ -27,7 +27,7 @@ dependencies = [
     # Core AI toolkit dependencies
     "fastapi>=0.104.0",
     "litellm>=1.0.0",
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2",
     "rich>=14.0.0",
     "sse-starlette>=1.6.0",
     "typer>=0.16.0",

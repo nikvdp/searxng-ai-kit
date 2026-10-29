@@ -22,7 +22,7 @@ from pathlib import Path
 
 # SearXNG git repository and commit hash
 SEARXNG_REPO = "https://github.com/searxng/searxng.git"
-SEARXNG_COMMIT = "cba0cffa8fd56bd691e319e3069fb02b4212a4df"
+SEARXNG_COMMIT = "cff884f98b1141bb6d5d3f104094fddafba78ef1"
 
 
 def run_command(cmd, cwd=None, check=True, env=None):
@@ -292,7 +292,14 @@ def build_wheel(venv_path, searxng_dir, output_dir):
         "UV_CACHE_DIR": cache_dir,
         "UV_DATA_DIR": data_dir,
         "UV_PYTHON_INSTALL_DIR": data_dir,
+        "GITHUB_REPOSITORY": "searxng/searxng",
+        "GITHUB_REF_NAME": "master",
     }
+    run_command(
+        ["uv", "run", "--no-project", "python", "-m", "searx.version", "freeze"],
+        cwd=searxng_dir,
+        env=env,
+    )
     run_command(
         [
             "uv",

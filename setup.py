@@ -5,6 +5,7 @@ Setup script with build hooks to automatically build SearXNG wheel.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +13,7 @@ from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py
 from setuptools.command.egg_info import egg_info
 
-SEARXNG_COMMIT = "cba0cffa8fd56bd691e319e3069fb02b4212a4df"
+SEARXNG_COMMIT = "cff884f98b1141bb6d5d3f104094fddafba78ef1"
 
 
 def resolve_searxng_commit():
@@ -47,8 +48,7 @@ class BuildSearXNGWheel:
             # Run the build script
             build_script = script_dir / "build_searxng_wheel.py"
             if not build_script.exists():
-                print("Error: build_searxng_wheel.py not found")
-                return
+                raise FileNotFoundError("build_searxng_wheel.py not found")
 
             try:
                 env = os.environ.copy()
@@ -68,18 +68,18 @@ class BuildSearXNGWheel:
                     wheels_dir, expected_commit
                 )
                 if not wheel_file:
-                    print("Warning: No wheel file found after build")
-                    return
+                    raise RuntimeError("No matching SearXNG wheel found after build")
 
             except subprocess.CalledProcessError as e:
                 print(f"Error building SearXNG wheel:")
                 print(f"STDOUT: {e.stdout}")
                 print(f"STDERR: {e.stderr}")
-                return
+                raise
 
         # Extract and vendor SearXNG modules into our package
-        if self.extract_and_vendor_searxng(wheel_file):
-            self.refresh_package_discovery()
+        if not self.extract_and_vendor_searxng(wheel_file):
+            raise RuntimeError("Failed to vendor the pinned SearXNG wheel")
+        self.refresh_package_discovery()
 
     def find_matching_searxng_wheel(self, wheels_dir, expected_commit):
         """Return an existing wheel only when metadata matches the pinned commit."""
@@ -262,7 +262,7 @@ class BuildSearXNGWheel:
                     if line.startswith("Requires-Dist:"):
                         dep = line.replace("Requires-Dist: ", "").strip()
                         # Skip test/dev dependencies (those with extras)
-                        if "; extra ==" not in dep:
+                        if "extra ==" not in dep:
                             # Handle conditional dependencies like "tomli>=2.2.1; python_version < \"3.11\""
                             if ";" in dep and "python_version" in dep:
                                 # Keep conditional dependencies as-is
@@ -344,6 +344,9 @@ class CustomBuildPy(BuildSearXNGWheel, build_py):
 
     def run(self):
         self.run_searxng_build()
+        searx_build = Path(self.build_lib) / "searx"
+        if searx_build.exists():
+            shutil.rmtree(searx_build)
         super().run()
 
 

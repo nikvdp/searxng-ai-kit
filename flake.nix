@@ -35,7 +35,7 @@
             url = "https://github.com/searxng/searxng.git";
             rev = upstreamCommit;
             leaveDotGit = true;
-            hash = "sha256-W8NzHuFD/z/Qp/etVS3VEtWF7kzBn1iuj9FWpiFdhWo=";
+            hash = "sha256-kBjj4aBwpjiIUWuYGWC4ytNxFzodn3lYkKlq70KZXPE=";
           };
           upstreamWheel = pkgs.stdenv.mkDerivation {
             pname = "searxng-wheel";
