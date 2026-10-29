@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""BASE (Scholar publications)
+"""BASE (Scholar publications)"""
 
-"""
 from datetime import datetime
 import re
 
@@ -28,7 +27,7 @@ base_url = (
 
 # engine dependent config
 paging = True
-number_of_results = 10
+page_size = 10
 
 # shortcuts for advanced search
 shortcut_dict = {
@@ -59,12 +58,12 @@ def request(query, params):
         query = re.sub(key, val, query)
 
     # basic search
-    offset = (params['pageno'] - 1) * number_of_results
+    offset = (params['pageno'] - 1) * page_size
 
     string_args = {
         'query': urlencode({'query': query}),
         'offset': offset,
-        'hits': number_of_results,
+        'hits': page_size,
     }
 
     params['url'] = base_url.format(**string_args)

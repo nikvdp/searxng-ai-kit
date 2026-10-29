@@ -32,27 +32,24 @@ Implementations
 ===============
 
 """
-from __future__ import annotations
-from typing import TYPE_CHECKING
-from typing import List, Dict, Any, Optional
+
+import typing as t
 from datetime import datetime
 from urllib.parse import quote
-from lxml import html
-from flask_babel import gettext
 
-from searx.utils import extract_text, eval_xpath, eval_xpath_list
-from searx.enginelib.traits import EngineTraits
+from flask_babel import gettext  # pyright: ignore[reportUnknownVariableType]
+
 from searx.data import ENGINE_TRAITS
+from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxException
+from searx.result_types import EngineResults
+from searx.utils import ElementType, eval_xpath, eval_xpath_list, extract_text
 
-if TYPE_CHECKING:
-    import httpx
-    import logging
+if t.TYPE_CHECKING:
+    from searx.extended_types import SXNG_Response
+    from searx.search.processors import OnlineParams
 
-    logger: logging.Logger
-
-# about
-about: Dict[str, Any] = {
+about: dict[str, t.Any] = {
     "website": "https://zlibrary-global.se",
     "wikidata_id": "Q104863992",
     "official_api_documentation": None,
@@ -61,8 +58,9 @@ about: Dict[str, Any] = {
     "results": "HTML",
 }
 
-categories: List[str] = ["files"]
+categories: list[str] = ["files", "books"]
 paging: bool = True
+language_support = True
 base_url: str = "https://zlibrary-global.se"
 
 zlib_year_from: str = ""
@@ -78,8 +76,12 @@ zlib_ext: str = ""
 ``PDF`` and ``EPUB``.
 """
 
+i18n_language = gettext("Language")
+i18n_book_rating = gettext("Book rating")
+i18n_file_quality = gettext("File quality")
 
-def init(engine_settings=None) -> None:  # pylint: disable=unused-argument
+
+def setup(engine_settings: dict[str, t.Any]) -> bool:  # pylint: disable=unused-argument
     """Check of engine's settings."""
     traits: EngineTraits = EngineTraits(**ENGINE_TRAITS["z-library"])
 
@@ -89,10 +91,11 @@ def init(engine_settings=None) -> None:  # pylint: disable=unused-argument
         raise ValueError(f"invalid setting year_from: {zlib_year_from}")
     if zlib_year_to and zlib_year_to not in traits.custom["year_to"]:
         raise ValueError(f"invalid setting year_to: {zlib_year_to}")
+    return True
 
 
-def request(query: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    lang: str = traits.get_language(params["language"], traits.all_locale)  # type: ignore
+def request(query: str, params: "OnlineParams") -> None:
+    lang: str | None = traits.get_language(params["searxng_locale"], traits.all_locale)
     search_url: str = (
         base_url
         + "/s/{search_query}/?page={pageno}"
@@ -110,58 +113,61 @@ def request(query: str, params: Dict[str, Any]) -> Dict[str, Any]:
         zlib_ext=zlib_ext,
     )
     params["verify"] = False
-    return params
 
 
-def domain_is_seized(dom):
-    return bool(dom.xpath('//title') and "seized" in dom.xpath('//title')[0].text.lower())
-
-
-def response(resp: httpx.Response) -> List[Dict[str, Any]]:
-    results: List[Dict[str, Any]] = []
-    dom = html.fromstring(resp.text)
+def response(resp: "SXNG_Response") -> EngineResults:
+    res = EngineResults()
+    dom = resp.html()
 
     if domain_is_seized(dom):
         raise SearxException(f"zlibrary domain is seized: {base_url}")
 
     for item in dom.xpath('//div[@id="searchResultBox"]//div[contains(@class, "resItemBox")]'):
-        results.append(_parse_result(item))
+        kwargs = _parse_result(item)
+        res.add(res.types.Paper(**kwargs))
 
-    return results
+    return res
 
 
-def _text(item, selector: str) -> str | None:
+def domain_is_seized(dom: ElementType):
+    return bool(dom.xpath("//title") and "seized" in dom.xpath("//title")[0].text.lower())
+
+
+def _text(item: ElementType, selector: str) -> str | None:
     return extract_text(eval_xpath(item, selector))
 
 
-i18n_language = gettext("Language")
-i18n_book_rating = gettext("Book rating")
-i18n_file_quality = gettext("File quality")
-
-
-def _parse_result(item) -> Dict[str, Any]:
+def _parse_result(item: ElementType) -> dict[str, t.Any]:
 
     author_elements = eval_xpath_list(item, './/div[@class="authors"]//a[@itemprop="author"]')
 
     result = {
-        "template": "paper.html",
         "url": base_url + item.xpath('(.//a[starts-with(@href, "/book/")])[1]/@href')[0],
         "title": _text(item, './/*[@itemprop="name"]'),
         "authors": [extract_text(author) for author in author_elements],
         "publisher": _text(item, './/a[@title="Publisher"]'),
-        "type": _text(item, './/div[contains(@class, "property__file")]//div[contains(@class, "property_value")]'),
+        "type": _text(
+            item,
+            './/div[contains(@class, "property__file")]//div[contains(@class, "property_value")]',
+        ),
     }
 
     thumbnail = _text(item, './/img[contains(@class, "cover")]/@data-src')
-    if not thumbnail.startswith('/'):
+    if thumbnail and not thumbnail.startswith("/"):
         result["thumbnail"] = thumbnail
 
-    year = _text(item, './/div[contains(@class, "property_year")]//div[contains(@class, "property_value")]')
+    year = _text(
+        item,
+        './/div[contains(@class, "property_year")]//div[contains(@class, "property_value")]',
+    )
     if year:
-        result["publishedDate"] = datetime.strptime(year, '%Y')
+        result["publishedDate"] = datetime.strptime(year, "%Y")
 
-    content = []
-    language = _text(item, './/div[contains(@class, "property_language")]//div[contains(@class, "property_value")]')
+    content: list[str] = []
+    language = _text(
+        item,
+        './/div[contains(@class, "property_language")]//div[contains(@class, "property_value")]',
+    )
     if language:
         content.append(f"{i18n_language}: {language.capitalize()}")
     book_rating = _text(item, './/span[contains(@class, "book-rating-interest-score")]')
@@ -177,63 +183,54 @@ def _parse_result(item) -> Dict[str, Any]:
 
 def fetch_traits(engine_traits: EngineTraits) -> None:
     """Fetch languages and other search arguments from zlibrary's search form."""
-    # pylint: disable=import-outside-toplevel, too-many-branches
+    # pylint: disable=import-outside-toplevel, too-many-branches, too-many-statements
 
     import babel
-    import httpx
+    import babel.core
 
-    from searx.network import get  # see https://github.com/searxng/searxng/issues/762
     from searx.locales import language_tag
+    from searx.network import get  # see https://github.com/searxng/searxng/issues/762
 
-    def _use_old_values():
-        # don't change anything, re-use the existing values
-        engine_traits.all_locale = ENGINE_TRAITS["z-library"]["all_locale"]
-        engine_traits.custom = ENGINE_TRAITS["z-library"]["custom"]
-        engine_traits.languages = ENGINE_TRAITS["z-library"]["languages"]
+    resp = get(base_url, timeout=5, verify=False)
+    if not resp.ok:
+        raise RuntimeError("Response from zlibrary is not OK.")
 
-    try:
-        resp = get(base_url, verify=False)
-    except (SearxException, httpx.HTTPError) as exc:
-        print(f"ERROR: zlibrary domain '{base_url}' is seized?")
-        print(f"  --> {exc}")
-        _use_old_values()
-        return
-
-    if not resp.ok:  # type: ignore
-        raise RuntimeError("Response from zlibrary's search page is not OK.")
-    dom = html.fromstring(resp.text)  # type: ignore
+    dom = resp.html()
 
     if domain_is_seized(dom):
-        print(f"ERROR: zlibrary domain is seized: {base_url}")
-        _use_old_values()
-        return
+        raise RuntimeError(f"Response from zlibrary is not OK. ({base_url} seized)")
 
     engine_traits.all_locale = ""
     engine_traits.custom["ext"] = []
-    engine_traits.custom["year_from"] = []
-    engine_traits.custom["year_to"] = []
 
+    l: list[str]
+    # years_from
+    l = []
     for year in eval_xpath_list(dom, "//div[@id='advSearch-noJS']//select[@id='sf_yearFrom']/option"):
-        engine_traits.custom["year_from"].append(year.get("value"))
+        l.append(year.get("value") or "")
+    engine_traits.custom["year_from"] = l
 
+    # years_to
+    l = []
     for year in eval_xpath_list(dom, "//div[@id='advSearch-noJS']//select[@id='sf_yearTo']/option"):
-        engine_traits.custom["year_to"].append(year.get("value"))
+        l.append(year.get("value") or "")
+    engine_traits.custom["year_to"] = l
 
+    # ext (file extensions)
+    l = []
     for ext in eval_xpath_list(dom, "//div[@id='advSearch-noJS']//select[@id='sf_extensions']/option"):
-        value: Optional[str] = ext.get("value")
-        if value is None:
-            value = ""
-        engine_traits.custom["ext"].append(value)
+        l.append(ext.get("value") or "")
+    engine_traits.custom["ext"] = l
 
     # Handle languages
     # Z-library uses English names for languages, so we need to map them to their respective locales
-    language_name_locale_map: Dict[str, babel.Locale] = {}
-    for locale in babel.core.localedata.locale_identifiers():  # type: ignore
+    language_name_locale_map: dict[str, babel.Locale] = {}
+    for locale in babel.core.localedata.locale_identifiers():
         # Create a Locale object for the current locale
         loc = babel.Locale.parse(locale)
         if loc.english_name is None:
             continue
-        language_name_locale_map[loc.english_name.lower()] = loc  # type: ignore
+        language_name_locale_map[loc.english_name.lower()] = loc
 
     for x in eval_xpath_list(dom, "//div[@id='advSearch-noJS']//select[@id='sf_languages']/option"):
         eng_lang = x.get("value")

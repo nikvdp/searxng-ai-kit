@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- Ebay (Videos, Music, Files)
+Ebay (Videos, Music, Files)
 """
 
 from urllib.parse import quote
 
-from lxml import html
 from searx.engines.xpath import extract_text
 
 # about
@@ -44,7 +43,7 @@ def request(query, params):
 def response(resp):
     results = []
 
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
     results_dom = dom.xpath(results_xpath)
     if not results_dom:
         return []

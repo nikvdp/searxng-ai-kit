@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Apple App Store
-
-"""
+"""Apple App Store"""
 
 from json import loads
 from urllib.parse import urlencode
@@ -19,7 +17,7 @@ about = {
     "results": 'JSON',
 }
 
-categories = ['files', 'apps']
+categories = ['it', 'apps']
 safesearch = True
 
 search_url = 'https://itunes.apple.com/search?{query}'

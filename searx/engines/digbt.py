@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- DigBT (Videos, Music, Files)
+DigBT (Videos, Music, Files)
 """
 
 from urllib.parse import urljoin
-from lxml import html
 from searx.utils import extract_text
 
 # about
@@ -33,7 +32,7 @@ def request(query, params):
 
 
 def response(resp):
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
     search_res = dom.xpath('.//td[@class="x-item"]')
 
     if not search_res:

@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Utility functions for the engines"""
 
-from __future__ import annotations
+from hashlib import pbkdf2_hmac
 
 import re
 import importlib
 import importlib.util
 import json
+import string
 import types
 
-from typing import Optional, Union, Any, Set, List, Dict, MutableMapping, Tuple, Callable
+import typing as t
+from collections.abc import MutableMapping, Callable
+
 from numbers import Number
 from os.path import splitext, join
 from random import choice
@@ -20,37 +23,40 @@ from datetime import timedelta
 from markdown_it import MarkdownIt
 
 from lxml import html
-from lxml.etree import ElementBase, XPath, XPathError, XPathSyntaxError
+from lxml.etree import XPath, XPathError, XPathSyntaxError
+from lxml.etree import ElementBase, _Element  # pyright: ignore[reportPrivateUsage]
 
 from searx import settings
-from searx.data import USER_AGENTS, data_dir
+from searx.data import USER_AGENTS
 from searx.version import VERSION_TAG
-from searx.sxng_locales import sxng_locales
 from searx.exceptions import SearxXPathSyntaxException, SearxEngineXPathException
 from searx import logger
 
-
 logger = logger.getChild('utils')
 
-XPathSpecType = Union[str, XPath]
+XPathSpecType: t.TypeAlias = str | XPath
+"""Type alias used by :py:obj:`searx.utils.get_xpath`,
+:py:obj:`searx.utils.eval_xpath` and other XPath selectors."""
+
+ElementType: t.TypeAlias = ElementBase | _Element
+
 
 _BLOCKED_TAGS = ('script', 'style')
 
 _ECMA_UNESCAPE4_RE = re.compile(r'%u([0-9a-fA-F]{4})', re.UNICODE)
 _ECMA_UNESCAPE2_RE = re.compile(r'%([0-9a-fA-F]{2})', re.UNICODE)
 
-_JS_QUOTE_KEYS_RE = re.compile(r'([\{\s,])(\w+)(:)')
-_JS_VOID_RE = re.compile(r'void\s+[0-9]+|void\s*\([0-9]+\)')
-_JS_DECIMAL_RE = re.compile(r":\s*\.")
+_JS_STRING_DELIMITERS = re.compile(r'(["\'`])')
+_JS_QUOTE_KEYS_RE = re.compile(r'([\{\s,])([\$_\w][\$_\w0-9]*)(:)')
+_JS_VOID_OR_UNDEFINED_RE = re.compile(r'void\s+[0-9]+|void\s*\([0-9]+\)|undefined')
+_JS_DECIMAL_RE = re.compile(r"([\[\,:])\s*(\-?)\s*([0-9_]*)\.([0-9_]*)")
+_JS_DECIMAL2_RE = re.compile(r"([\[\,:])\s*(\-?)\s*([0-9_]+)")
+_JS_EXTRA_COMA_RE = re.compile(r"\s*,\s*([\]\}])")
+_JS_STRING_ESCAPE_RE = re.compile(r'\\(.)')
+_JSON_PASSTHROUGH_ESCAPES = R'"\bfnrtu'
 
-_XPATH_CACHE: Dict[str, XPath] = {}
-_LANG_TO_LC_CACHE: Dict[str, Dict[str, str]] = {}
-
-_FASTTEXT_MODEL: Optional["fasttext.FastText._FastText"] = None  # type: ignore
-"""fasttext model to predict language of a search term"""
-
-SEARCH_LANGUAGE_CODES = frozenset([searxng_locale[0].split('-')[0] for searxng_locale in sxng_locales])
-"""Languages supported by most searxng engines (:py:obj:`searx.sxng_locales.sxng_locales`)."""
+_XPATH_CACHE: dict[str, XPath] = {}
+_LANG_TO_LC_CACHE: dict[str, dict[str, str]] = {}
 
 
 class _NotSetClass:  # pylint: disable=too-few-public-methods
@@ -66,12 +72,15 @@ def searxng_useragent() -> str:
     return f"SearXNG/{VERSION_TAG} {settings['outgoing']['useragent_suffix']}".strip()
 
 
-def gen_useragent(os_string: Optional[str] = None) -> str:
+def gen_useragent(os_string: str | None = None) -> str:
     """Return a random browser User Agent
 
     See searx/data/useragents.json
     """
-    return USER_AGENTS['ua'].format(os=os_string or choice(USER_AGENTS['os']), version=choice(USER_AGENTS['versions']))
+    return USER_AGENTS['ua'].format(
+        os=os_string or choice(USER_AGENTS['os']),
+        version=choice(USER_AGENTS['versions']),
+    )
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -79,15 +88,15 @@ class HTMLTextExtractor(HTMLParser):
 
     def __init__(self):
         HTMLParser.__init__(self)
-        self.result = []
-        self.tags = []
+        self.result: list[str] = []
+        self.tags: list[str] = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tags.append(tag)
         if tag == 'br':
             self.result.append(' ')
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if not self.tags:
             return
 
@@ -100,12 +109,12 @@ class HTMLTextExtractor(HTMLParser):
     def is_valid_tag(self):
         return not self.tags or self.tags[-1] not in _BLOCKED_TAGS
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if not self.is_valid_tag():
             return
         self.result.append(data)
 
-    def handle_charref(self, name):
+    def handle_charref(self, name: str) -> None:
         if not self.is_valid_tag():
             return
         if name[0] in ('x', 'X'):
@@ -114,7 +123,7 @@ class HTMLTextExtractor(HTMLParser):
             codepoint = int(name)
         self.result.append(chr(codepoint))
 
-    def handle_entityref(self, name):
+    def handle_entityref(self, name: str) -> None:
         if not self.is_valid_tag():
             return
         # codepoint = htmlentitydefs.name2codepoint[name]
@@ -124,7 +133,7 @@ class HTMLTextExtractor(HTMLParser):
     def get_text(self):
         return ''.join(self.result).strip()
 
-    def error(self, message):
+    def error(self, message: str) -> None:
         # error handle is needed in <py3.10
         # https://github.com/python/cpython/pull/8562/files
         raise AssertionError(message)
@@ -188,19 +197,30 @@ def markdown_to_text(markdown_str: str) -> str:
         'Headline'
     """
 
-    html_str = (
+    html_str: str = (
         MarkdownIt("commonmark", {"typographer": True}).enable(["replacements", "smartquotes"]).render(markdown_str)
     )
     return html_to_text(html_str)
 
 
-def extract_text(xpath_results, allow_none: bool = False) -> Optional[str]:
+def extract_text(
+    xpath_results: list[ElementType] | ElementType | str | Number | bool | None,
+    allow_none: bool = False,
+) -> str | None:
     """Extract text from a lxml result
 
-    * if xpath_results is list, extract the text from each result and concat the list
-    * if xpath_results is a xml element, extract all the text node from it
-      ( text_content() method from lxml )
-    * if xpath_results is a string element, then it's already done
+    - If ``xpath_results`` is a list of :py:obj:`ElementType` objects, extract
+      the text from each result and concatenate the list in a string.
+
+    - If ``xpath_results`` is a :py:obj:`ElementType` object, extract all the
+      text node from it ( :py:obj:`lxml.html.tostring`, ``method="text"`` )
+
+    - If ``xpath_results`` is of type :py:obj:`str` or :py:obj:`Number`,
+      :py:obj:`bool` the string value is returned.
+
+    - If ``xpath_results`` is of type ``None`` a :py:obj:`ValueError` is raised,
+      except ``allow_none`` is ``True`` where ``None`` is returned.
+
     """
     if isinstance(xpath_results, list):
         # it's list of result : concat everything using recursive call
@@ -208,11 +228,16 @@ def extract_text(xpath_results, allow_none: bool = False) -> Optional[str]:
         for e in xpath_results:
             result = result + (extract_text(e) or '')
         return result.strip()
-    if isinstance(xpath_results, ElementBase):
+    if isinstance(xpath_results, ElementType):
         # it's a element
-        text: str = html.tostring(xpath_results, encoding='unicode', method='text', with_tail=False)
-        text = text.strip().replace('\n', ' ')
-        return ' '.join(text.split())
+        text: str = html.tostring(  # type: ignore
+            xpath_results,  # pyright: ignore[reportArgumentType]
+            encoding='unicode',
+            method='text',
+            with_tail=False,
+        )
+        text = text.strip().replace('\n', ' ')  # type: ignore
+        return ' '.join(text.split())  # type: ignore
     if isinstance(xpath_results, (str, Number, bool)):
         return str(xpath_results)
     if xpath_results is None and allow_none:
@@ -272,12 +297,8 @@ def normalize_url(url: str, base_url: str) -> str:
     return url
 
 
-def extract_url(xpath_results, base_url) -> str:
+def extract_url(xpath_results: list[ElementType] | ElementType | str | Number | bool | None, base_url: str) -> str:
     """Extract and normalize URL from lxml Element
-
-    Args:
-        * xpath_results (Union[List[html.HtmlElement], html.HtmlElement]): lxml Element(s)
-        * base_url (str): Base URL
 
     Example:
         >>> def f(s, search_url):
@@ -313,7 +334,7 @@ def extract_url(xpath_results, base_url) -> str:
     raise ValueError('URL not found')
 
 
-def dict_subset(dictionary: MutableMapping, properties: Set[str]) -> Dict:
+def dict_subset(dictionary: MutableMapping[t.Any, t.Any], properties: set[str]) -> MutableMapping[str, t.Any]:
     """Extract a subset of a dict
 
     Examples:
@@ -325,7 +346,7 @@ def dict_subset(dictionary: MutableMapping, properties: Set[str]) -> Dict:
     return {k: dictionary[k] for k in properties if k in dictionary}
 
 
-def humanize_bytes(size, precision=2):
+def humanize_bytes(size: int | float, precision: int = 2):
     """Determine the *human readable* value of bytes on 1024 base (1KB=1024B)."""
     s = ['B ', 'KB', 'MB', 'GB', 'TB']
 
@@ -337,7 +358,7 @@ def humanize_bytes(size, precision=2):
     return "%.*f %s" % (precision, size, s[p])
 
 
-def humanize_number(size, precision=0):
+def humanize_number(size: int | float, precision: int = 0):
     """Determine the *human readable* value of a decimal number."""
     s = ['', 'K', 'M', 'B', 'T']
 
@@ -356,7 +377,7 @@ def convert_str_to_int(number_str: str) -> int:
     return 0
 
 
-def extr(txt: str, begin: str, end: str, default: str = ""):
+def extr(txt: str, begin: str, end: str, default: str = "") -> str:
     """Extract the string between ``begin`` and ``end`` from ``txt``
 
     :param txt:     String to search in
@@ -385,7 +406,7 @@ def extr(txt: str, begin: str, end: str, default: str = ""):
         return default
 
 
-def int_or_zero(num: Union[List[str], str]) -> int:
+def int_or_zero(num: list[str] | str) -> int:
     """Convert num to int or 0. num can be either a str or a list.
     If num is a list, the first element is converted to int (or return 0 if the list is empty).
     If num is a str, see convert_str_to_int
@@ -395,38 +416,6 @@ def int_or_zero(num: Union[List[str], str]) -> int:
             return 0
         num = num[0]
     return convert_str_to_int(num)
-
-
-def is_valid_lang(lang) -> Optional[Tuple[bool, str, str]]:
-    """Return language code and name if lang describe a language.
-
-    Examples:
-        >>> is_valid_lang('zz')
-        None
-        >>> is_valid_lang('uk')
-        (True, 'uk', 'ukrainian')
-        >>> is_valid_lang(b'uk')
-        (True, 'uk', 'ukrainian')
-        >>> is_valid_lang('en')
-        (True, 'en', 'english')
-        >>> searx.utils.is_valid_lang('Español')
-        (True, 'es', 'spanish')
-        >>> searx.utils.is_valid_lang('Spanish')
-        (True, 'es', 'spanish')
-    """
-    if isinstance(lang, bytes):
-        lang = lang.decode()
-    is_abbr = len(lang) == 2
-    lang = lang.lower()
-    if is_abbr:
-        for l in sxng_locales:
-            if l[0][:2] == lang:
-                return (True, l[0][:2], l[3].lower())
-        return None
-    for l in sxng_locales:
-        if l[1].lower() == lang or l[3].lower() == lang:
-            return (True, l[0][:2], l[3].lower())
-    return None
 
 
 def load_module(filename: str, module_dir: str) -> types.ModuleType:
@@ -443,7 +432,7 @@ def load_module(filename: str, module_dir: str) -> types.ModuleType:
     return module
 
 
-def to_string(obj: Any) -> str:
+def to_string(obj: t.Any) -> str:
     """Convert obj to its string representation."""
     if isinstance(obj, str):
         return obj
@@ -452,7 +441,7 @@ def to_string(obj: Any) -> str:
     return repr(obj)
 
 
-def ecma_unescape(string: str) -> str:
+def ecma_unescape(text: str) -> str:
     """Python implementation of the unescape javascript function
 
     https://www.ecma-international.org/ecma-262/6.0/#sec-unescape-string
@@ -467,20 +456,20 @@ def ecma_unescape(string: str) -> str:
         'ó'
     """
     # "%u5409" becomes "吉"
-    string = _ECMA_UNESCAPE4_RE.sub(lambda e: chr(int(e.group(1), 16)), string)
+    text = _ECMA_UNESCAPE4_RE.sub(lambda e: chr(int(e.group(1), 16)), text)
     # "%20" becomes " ", "%F3" becomes "ó"
-    string = _ECMA_UNESCAPE2_RE.sub(lambda e: chr(int(e.group(1), 16)), string)
-    return string
+    text = _ECMA_UNESCAPE2_RE.sub(lambda e: chr(int(e.group(1), 16)), text)
+    return text
 
 
-def remove_pua_from_str(string):
+def remove_pua_from_str(text: str):
     """Removes unicode's "PRIVATE USE CHARACTER"s (PUA_) from a string.
 
     .. _PUA: https://en.wikipedia.org/wiki/Private_Use_Areas
     """
     pua_ranges = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
-    s = []
-    for c in string:
+    s: list[str] = []
+    for c in text:
         i = ord(c)
         if any(a <= i <= b for (a, b) in pua_ranges):
             continue
@@ -488,17 +477,17 @@ def remove_pua_from_str(string):
     return "".join(s)
 
 
-def get_string_replaces_function(replaces: Dict[str, str]) -> Callable[[str], str]:
+def get_string_replaces_function(replaces: dict[str, str]) -> Callable[[str], str]:
     rep = {re.escape(k): v for k, v in replaces.items()}
     pattern = re.compile("|".join(rep.keys()))
 
-    def func(text):
+    def func(text: str):
         return pattern.sub(lambda m: rep[re.escape(m.group(0))], text)
 
     return func
 
 
-def get_engine_from_settings(name: str) -> Dict:
+def get_engine_from_settings(name: str) -> dict[str, dict[str, str]]:
     """Return engine configuration from settings.yml of a given engine name"""
 
     if 'engines' not in settings:
@@ -514,20 +503,14 @@ def get_engine_from_settings(name: str) -> Dict:
 
 
 def get_xpath(xpath_spec: XPathSpecType) -> XPath:
-    """Return cached compiled XPath
+    """Return cached compiled :py:obj:`lxml.etree.XPath` object.
 
-    There is no thread lock.
-    Worst case scenario, xpath_str is compiled more than one time.
+    ``TypeError``:
+      Raised when ``xpath_spec`` is neither a :py:obj:`str` nor a
+      :py:obj:`lxml.etree.XPath`.
 
-    Args:
-        * xpath_spec (str|lxml.etree.XPath): XPath as a str or lxml.etree.XPath
-
-    Returns:
-        * result (bool, float, list, str): Results.
-
-    Raises:
-        * TypeError: Raise when xpath_spec is neither a str nor a lxml.etree.XPath
-        * SearxXPathSyntaxException: Raise when there is a syntax error in the XPath
+    ``SearxXPathSyntaxException``:
+      Raised when there is a syntax error in the *XPath* selector (``str``).
     """
     if isinstance(xpath_spec, str):
         result = _XPATH_CACHE.get(xpath_spec, None)
@@ -542,50 +525,43 @@ def get_xpath(xpath_spec: XPathSpecType) -> XPath:
     if isinstance(xpath_spec, XPath):
         return xpath_spec
 
-    raise TypeError('xpath_spec must be either a str or a lxml.etree.XPath')
+    raise TypeError('xpath_spec must be either a str or a lxml.etree.XPath')  # pyright: ignore[reportUnreachable]
 
 
-def eval_xpath(element: ElementBase, xpath_spec: XPathSpecType):
-    """Equivalent of element.xpath(xpath_str) but compile xpath_str once for all.
-    See https://lxml.de/xpathxslt.html#xpath-return-values
+def eval_xpath(element: ElementType, xpath_spec: XPathSpecType) -> t.Any:
+    """Equivalent of ``element.xpath(xpath_str)`` but compile ``xpath_str`` into
+    a :py:obj:`lxml.etree.XPath` object once for all.  The return value of
+    ``xpath(..)`` is complex, read `XPath return values`_ for more details.
 
-    Args:
-        * element (ElementBase): [description]
-        * xpath_spec (str|lxml.etree.XPath): XPath as a str or lxml.etree.XPath
+    .. _XPath return values:
+        https://lxml.de/xpathxslt.html#xpath-return-values
 
-    Returns:
-        * result (bool, float, list, str): Results.
+    ``TypeError``:
+      Raised when ``xpath_spec`` is neither a :py:obj:`str` nor a
+      :py:obj:`lxml.etree.XPath`.
 
-    Raises:
-        * TypeError: Raise when xpath_spec is neither a str nor a lxml.etree.XPath
-        * SearxXPathSyntaxException: Raise when there is a syntax error in the XPath
-        * SearxEngineXPathException: Raise when the XPath can't be evaluated.
+    ``SearxXPathSyntaxException``:
+      Raised when there is a syntax error in the *XPath* selector (``str``).
+
+    ``SearxEngineXPathException:``
+      Raised when the XPath can't be evaluated (masked
+      :py:obj:`lxml.etree..XPathError`).
     """
-    xpath = get_xpath(xpath_spec)
+    xpath: XPath = get_xpath(xpath_spec)
     try:
+        # https://lxml.de/xpathxslt.html#xpath-return-values
         return xpath(element)
     except XPathError as e:
         arg = ' '.join([str(i) for i in e.args])
         raise SearxEngineXPathException(xpath_spec, arg) from e
 
 
-def eval_xpath_list(element: ElementBase, xpath_spec: XPathSpecType, min_len: Optional[int] = None):
-    """Same as eval_xpath, check if the result is a list
+def eval_xpath_list(element: ElementType, xpath_spec: XPathSpecType, min_len: int | None = None) -> list[t.Any]:
+    """Same as :py:obj:`searx.utils.eval_xpath`, but additionally ensures the
+    return value is a :py:obj:`list`.  The minimum length of the list is also
+    checked (if ``min_len`` is set)."""
 
-    Args:
-        * element (ElementBase): [description]
-        * xpath_spec (str|lxml.etree.XPath): XPath as a str or lxml.etree.XPath
-        * min_len (int, optional): [description]. Defaults to None.
-
-    Raises:
-        * TypeError: Raise when xpath_spec is neither a str nor a lxml.etree.XPath
-        * SearxXPathSyntaxException: Raise when there is a syntax error in the XPath
-        * SearxEngineXPathException: raise if the result is not a list
-
-    Returns:
-        * result (bool, float, list, str): Results.
-    """
-    result = eval_xpath(element, xpath_spec)
+    result: list[t.Any] = eval_xpath(element, xpath_spec)
     if not isinstance(result, list):
         raise SearxEngineXPathException(xpath_spec, 'the result is not a list')
     if min_len is not None and min_len > len(result):
@@ -593,53 +569,48 @@ def eval_xpath_list(element: ElementBase, xpath_spec: XPathSpecType, min_len: Op
     return result
 
 
-def eval_xpath_getindex(elements: ElementBase, xpath_spec: XPathSpecType, index: int, default=_NOTSET):
-    """Call eval_xpath_list then get one element using the index parameter.
-    If the index does not exist, either raise an exception is default is not set,
-    other return the default value (can be None).
+def eval_xpath_getindex(
+    element: ElementType,
+    xpath_spec: XPathSpecType,
+    index: int,
+    default: t.Any = _NOTSET,
+) -> t.Any:
+    """Same as :py:obj:`searx.utils.eval_xpath_list`, but returns item on
+    position ``index`` from the list (index starts with ``0``).
 
-    Args:
-        * elements (ElementBase): lxml element to apply the xpath.
-        * xpath_spec (str|lxml.etree.XPath): XPath as a str or lxml.etree.XPath.
-        * index (int): index to get
-        * default (Object, optional): Defaults if index doesn't exist.
-
-    Raises:
-        * TypeError: Raise when xpath_spec is neither a str nor a lxml.etree.XPath
-        * SearxXPathSyntaxException: Raise when there is a syntax error in the XPath
-        * SearxEngineXPathException: if the index is not found. Also see eval_xpath.
-
-    Returns:
-        * result (bool, float, list, str): Results.
+    The exceptions known from :py:obj:`searx.utils.eval_xpath` are thrown. If a
+    default is specified, this is returned if an element at position ``index``
+    could not be determined.
     """
-    result = eval_xpath_list(elements, xpath_spec)
+
+    result = eval_xpath_list(element, xpath_spec)
     if -len(result) <= index < len(result):
         return result[index]
     if default == _NOTSET:
-        # raise an SearxEngineXPathException instead of IndexError
-        # to record xpath_spec
+        # raise an SearxEngineXPathException instead of IndexError to record
+        # xpath_spec
         raise SearxEngineXPathException(xpath_spec, 'index ' + str(index) + ' not found')
     return default
 
 
-def _get_fasttext_model() -> "fasttext.FastText._FastText":  # type: ignore
-    global _FASTTEXT_MODEL  # pylint: disable=global-statement
-    if _FASTTEXT_MODEL is None:
-        import fasttext  # pylint: disable=import-outside-toplevel
+def get_embedded_stream_url(url: str) -> str:
+    """Converts a standard video URL into its embed format.
 
-        # Monkey patch: prevent fasttext from showing a (useless) warning when loading a model.
-        fasttext.FastText.eprint = lambda x: None
-        _FASTTEXT_MODEL = fasttext.load_model(str(data_dir / 'lid.176.ftz'))
-    return _FASTTEXT_MODEL
+    Supported services include:
 
+    - Youtube
+    - Facebook
+    - Instagram
+    - TikTok
+    - Dailymotion
+    - Bilibili
 
-def get_embeded_stream_url(url):
-    """
-    Converts a standard video URL into its embed format. Supported services include Youtube,
-    Facebook, Instagram, TikTok, Dailymotion, and Bilibili.
+    The function is suitable for the field :obj:`MainResult.iframe_src
+    <searx.result_types.MainResult.iframe_src>`.  If ``url`` is not from one of
+    the supported services, an empty string is returned.
     """
     parsed_url = urlparse(url)
-    iframe_src = None
+    iframe_src = ""
 
     # YouTube
     if parsed_url.netloc in ['www.youtube.com', 'youtube.com'] and parsed_url.path == '/watch' and parsed_url.query:
@@ -695,83 +666,53 @@ def get_embeded_stream_url(url):
     return iframe_src
 
 
-def detect_language(text: str, threshold: float = 0.3, only_search_languages: bool = False) -> Optional[str]:
-    """Detect the language of the ``text`` parameter.
-
-    :param str text: The string whose language is to be detected.
-
-    :param float threshold: Threshold filters the returned labels by a threshold
-        on probability.  A choice of 0.3 will return labels with at least 0.3
-        probability.
-
-    :param bool only_search_languages: If ``True``, returns only supported
-        SearXNG search languages.  see :py:obj:`searx.languages`
-
-    :rtype: str, None
-    :returns:
-        The detected language code or ``None``. See below.
-
-    :raises ValueError: If ``text`` is not a string.
-
-    The language detection is done by using `a fork`_ of the fastText_ library
-    (`python fasttext`_). fastText_ distributes the `language identification
-    model`_, for reference:
-
-    - `FastText.zip: Compressing text classification models`_
-    - `Bag of Tricks for Efficient Text Classification`_
-
-    The `language identification model`_ support the language codes
-    (ISO-639-3)::
-
-        af als am an ar arz as ast av az azb ba bar bcl be bg bh bn bo bpy br bs
-        bxr ca cbk ce ceb ckb co cs cv cy da de diq dsb dty dv el eml en eo es
-        et eu fa fi fr frr fy ga gd gl gn gom gu gv he hi hif hr hsb ht hu hy ia
-        id ie ilo io is it ja jbo jv ka kk km kn ko krc ku kv kw ky la lb lez li
-        lmo lo lrc lt lv mai mg mhr min mk ml mn mr mrj ms mt mwl my myv mzn nah
-        nap nds ne new nl nn no oc or os pa pam pfl pl pms pnb ps pt qu rm ro ru
-        rue sa sah sc scn sco sd sh si sk sl so sq sr su sv sw ta te tg th tk tl
-        tr tt tyv ug uk ur uz vec vep vi vls vo wa war wuu xal xmf yi yo yue zh
-
-    By using ``only_search_languages=True`` the `language identification model`_
-    is harmonized with the SearXNG's language (locale) model.  General
-    conditions of SearXNG's locale model are:
-
-    a. SearXNG's locale of a query is passed to the
-       :py:obj:`searx.locales.get_engine_locale` to get a language and/or region
-       code that is used by an engine.
-
-    b. Most of SearXNG's engines do not support all the languages from `language
-       identification model`_ and there is also a discrepancy in the ISO-639-3
-       (fasttext) and ISO-639-2 (SearXNG)handling.  Further more, in SearXNG the
-       locales like ``zh-TH`` (``zh-CN``) are mapped to ``zh_Hant``
-       (``zh_Hans``) while the `language identification model`_ reduce both to
-       ``zh``.
-
-    .. _a fork: https://github.com/searxng/fasttext-predict
-    .. _fastText: https://fasttext.cc/
-    .. _python fasttext: https://pypi.org/project/fasttext/
-    .. _language identification model: https://fasttext.cc/docs/en/language-identification.html
-    .. _Bag of Tricks for Efficient Text Classification: https://arxiv.org/abs/1607.01759
-    .. _`FastText.zip: Compressing text classification models`: https://arxiv.org/abs/1612.03651
-
-    """
-    if not isinstance(text, str):
-        raise ValueError('text must a str')
-    r = _get_fasttext_model().predict(text.replace('\n', ' '), k=1, threshold=threshold)
-    if isinstance(r, tuple) and len(r) == 2 and len(r[0]) > 0 and len(r[1]) > 0:
-        language = r[0][0].split('__label__')[1]
-        if only_search_languages and language not in SEARCH_LANGUAGE_CODES:
-            return None
-        return language
-    return None
+def _j2p_process_escape(match: re.Match[str]) -> str:
+    # deal with ECMA escape characters
+    _escape = match.group(1) or match.group(2)
+    return (
+        Rf'\{_escape}'
+        if _escape in _JSON_PASSTHROUGH_ESCAPES
+        else R'\u00' if _escape == 'x' else '' if _escape == '\n' else _escape
+    )
 
 
-def js_variable_to_python(js_variable):
+def _j2p_decimal(match: re.Match[str]) -> str:
+    return (
+        match.group(1)
+        + match.group(2)
+        + (match.group(3).replace("_", "") or "0")
+        + "."
+        + (match.group(4).replace("_", "") or "0")
+    )
+
+
+def _j2p_decimal2(match: re.Match[str]) -> str:
+    return match.group(1) + match.group(2) + match.group(3).replace("_", "")
+
+
+def js_obj_str_to_python(js_obj_str: str) -> t.Any:
     """Convert a javascript variable into JSON and then load the value
 
     It does not deal with all cases, but it is good enough for now.
     chompjs has a better implementation.
     """
+    s = js_obj_str_to_json_str(js_obj_str)
+    # load the JSON and return the result
+    if s == "":
+        raise ValueError("js_obj_str can't be an empty string")
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError as e:
+        logger.debug("Internal error: js_obj_str_to_python creates invalid JSON:\n%s", s)
+        raise ValueError("js_obj_str_to_python creates invalid JSON") from e
+
+
+def js_obj_str_to_json_str(js_obj_str: str) -> str:
+    if not isinstance(js_obj_str, str):
+        raise ValueError("js_obj_str must be of type str")
+    if js_obj_str == "":
+        raise ValueError("js_obj_str can't be an empty string")
+
     # when in_string is not None, it contains the character that has opened the string
     # either simple quote or double quote
     in_string = None
@@ -779,72 +720,195 @@ def js_variable_to_python(js_variable):
     # r"""{ a:"f\"irst", c:'sec"ond'}"""
     # becomes
     # ['{ a:', '"', 'f\\', '"', 'irst', '"', ', c:', "'", 'sec', '"', 'ond', "'", '}']
-    parts = re.split(r'(["\'])', js_variable)
-    # previous part (to check the escape character antislash)
-    previous_p = ""
+    parts = _JS_STRING_DELIMITERS.split(js_obj_str)
+    # does the previous part ends with a backslash?
+    blackslash_just_before = False
     for i, p in enumerate(parts):
-        # parse characters inside a ECMA string
-        if in_string:
-            # we are in a JS string: replace the colon by a temporary character
-            # so quote_keys_regex doesn't have to deal with colon inside the JS strings
-            parts[i] = parts[i].replace(':', chr(1))
-            if in_string == "'":
-                # the JS string is delimited by simple quote.
-                # This is not supported by JSON.
-                # simple quote delimited string are converted to double quote delimited string
-                # here, inside a JS string, we escape the double quote
-                parts[i] = parts[i].replace('"', r'\"')
-
-        # deal with delimiters and escape character
-        if not in_string and p in ('"', "'"):
-            # we are not in string
-            # but p is double or simple quote
-            # that's the start of a new string
-            # replace simple quote by double quote
-            # (JSON doesn't support simple quote)
-            parts[i] = '"'
-            in_string = p
-            continue
-        if p == in_string:
-            # we are in a string and the current part MAY close the string
-            if len(previous_p) > 0 and previous_p[-1] == '\\':
-                # there is an antislash just before: the ECMA string continue
-                continue
-            # the current p close the string
-            # replace simple quote by double quote
-            parts[i] = '"'
+        if p == in_string and not blackslash_just_before:
+            # * the current part matches the character which has opened the string
+            # * there is no antislash just before
+            # --> the current part close the current string
             in_string = None
+            # replace simple quote and ` by double quote
+            # since JSON supports only double quote for string
+            parts[i] = '"'
 
-        if not in_string:
-            # replace void 0 by null
+        elif in_string:
+            # --> we are in a JS string
+            # replace the colon by a temporary character
+            # so _JS_QUOTE_KEYS_RE doesn't have to deal with colon inside the JS strings
+            p = p.replace(':', chr(1))
+            # replace JS escape sequences by JSON escape sequences
+            p = _JS_STRING_ESCAPE_RE.sub(_j2p_process_escape, p)
+            # the JS string is delimited by simple quote.
+            # This is not supported by JSON.
+            # simple quote delimited string are converted to double quote delimited string
+            # here, inside a JS string, we escape the double quote
+            if in_string == "'":
+                p = p.replace('"', r'\"')
+            parts[i] = p
+            # drop a trailing \ that was escaping the quote
+            # leave it if it has been escaped twice as a literal i.e. two \ and ' in a row
+            if blackslash_just_before and p[:1] == "'":
+                prev = parts[i - 1]
+                num_backslashes = len(prev) - len(prev.rstrip("\\"))
+                if num_backslashes % 2 == 1:
+                    parts[i - 1] = prev[:-1]
+
+        elif in_string is None and p in ('"', "'", "`"):
+            # we are not in string but p is string delimiter
+            # --> that's the start of a new string
+            in_string = p
+            # replace simple quote by double quote
+            # since JSON supports only double quote for string
+            parts[i] = '"'
+
+        elif in_string is None:
+            # we are not in a string
+            # replace by null these values:
+            # * void 0
+            # * void(0)
+            # * undefined
             # https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/void
-            # we are sure there is no string in p
-            parts[i] = _JS_VOID_RE.sub("null", p)
-        # update previous_p
-        previous_p = p
+            p = _JS_VOID_OR_UNDEFINED_RE.sub("null", p)
+            # make sure there is a leading zero in front of float
+            p = _JS_DECIMAL_RE.sub(_j2p_decimal, p)
+            p = _JS_DECIMAL2_RE.sub(_j2p_decimal2, p)
+            # remove extra coma in a list or an object
+            # for example [1,2,3,] becomes [1,2,3]
+            p = _JS_EXTRA_COMA_RE.sub(lambda match: match.group(1), p)
+            parts[i] = p
+
+        # update for the next iteration
+        blackslash_just_before = len(p) > 0 and p[-1] == '\\'
+
     # join the string
     s = ''.join(parts)
-    # add quote around the key
+    # add quote arround the key
     # { a: 12 }
     # becomes
     # { "a": 12 }
     s = _JS_QUOTE_KEYS_RE.sub(r'\1"\2"\3', s)
-    s = _JS_DECIMAL_RE.sub(":0.", s)
-    # replace the surogate character by colon
-    s = s.replace(chr(1), ':')
-    # replace single-quote followed by comma with double-quote and comma
-    # {"a": "\"12\"',"b": "13"}
-    # becomes
-    # {"a": "\"12\"","b": "13"}
-    s = s.replace("',", "\",")
-    # load the JSON and return the result
-    return json.loads(s)
+    # replace the surogate character by colon and strip whitespaces
+    s = s.replace(chr(1), ':').strip()
+    return s
+
+
+def js_find_matching_bracket(text: str, start: int, open_char: str = "{", close_char: str = "}") -> int:
+    """Return index of the matching closing bracket, safely ignoring JS string literals."""
+    depth = 0
+    i = start
+    in_string = None
+    escape_ = False
+
+    while i < len(text):
+        c = text[i]
+        if in_string:
+            if escape_:
+                escape_ = False
+            elif c == "\\":
+                escape_ = True
+            elif c == in_string:
+                in_string = None
+        elif c in ('"', "'", "`"):
+            in_string = c
+        elif c == open_char:
+            depth += 1
+        elif c == close_char:
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise ValueError(f"unbalanced {open_char}{close_char} starting at {start}")
+
+
+def js_split_args(args_str: str) -> list[str]:
+    """Split a JS argument list, respecting strings and nested brackets."""
+    args: list[str] = []
+    last_pos = 0
+    in_string = None
+    escape_ = False
+    depth = 0
+
+    for idx, c in enumerate(f"{args_str},"):
+        if in_string:
+            if escape_:
+                escape_ = False
+            elif c == "\\":
+                escape_ = True
+            elif c == in_string:
+                in_string = None
+        elif c in ('"', "'", "`"):
+            in_string = c
+        elif c in ("(", "[", "{"):
+            depth += 1
+        elif c in (")", "]", "}"):
+            depth -= 1
+        elif c == "," and depth == 0:
+            if item := args_str[last_pos:idx].strip():
+                args.append(item)
+            last_pos = idx + 1
+    return args
+
+
+def js_find_variable_positions(js_obj: str) -> list[tuple[str, int]]:
+    """Find all variables referenced in the JavaScript object."""
+    # pylint: disable=too-many-branches
+    # pylint: disable=unsubscriptable-object
+
+    matches: list[tuple[str, int]] = []
+
+    in_string = False
+    in_escape = False
+
+    # flat array like [1,2,3], not e.g. [{"a": 3}]
+    in_flat_array = False
+    # if the current position is inside the place of
+    # a JS value, e.g. the range of ` bar` in {"foo": bar}
+    in_value = False
+    current_var: tuple[str, int] | None = None
+
+    for pos, c in enumerate(js_obj):
+        if in_string:
+            if in_escape:
+                in_escape = False
+            elif c == "\\":
+                in_escape = True
+            elif c == in_string:
+                in_string = None
+        elif c in ("'", "\"", "`"):
+            in_string = c
+        elif c == ":":
+            in_value = True
+        elif c in (",", "{", "}", "[", "]"):
+            # handle matching variables in arrays like [a,b,c]
+            # i.e. if we encounter a "," in such a flat array,
+            # we're still inside a value
+            if c == "[":
+                in_flat_array = True
+            elif c != ",":
+                in_flat_array = False
+            in_value = in_flat_array
+            if current_var:
+                # reached end of variable name
+                if current_var[0] not in ("void0", "true", "false", "null", "undefined"):
+                    matches.append(current_var)
+                current_var = None
+        elif in_value:
+            if current_var and c in (string.ascii_letters + string.digits + "_$"):
+                current_var = (current_var[0] + c, current_var[1])
+            elif c in string.ascii_letters + "_$":
+                # start of new variable name
+                current_var = (c, pos)
+
+    return matches
 
 
 def parse_duration_string(duration_str: str) -> timedelta | None:
-    """Parse a time string in format MM:SS or HH:MM:SS and convert it to a `timedelta` object.
+    """Parse a time string in format MM:SS or HH:MM:SS and convert it to a
+    :obj:`datetime.timedelta` object.
 
-    Returns None if the provided string doesn't match any of the formats.
+    Returns ``None`` if the provided string doesn't match any of the formats.
     """
     duration_str = duration_str.strip()
 
@@ -853,11 +917,42 @@ def parse_duration_string(duration_str: str) -> timedelta | None:
 
     try:
         # prepending ["00"] here inits hours to 0 if they are not provided
-        time_parts = (["00"] + duration_str.split(":"))[:3]
+        time_parts = (["00"] + duration_str.split(":"))[-3:]
         hours, minutes, seconds = map(int, time_parts)
         return timedelta(hours=hours, minutes=minutes, seconds=seconds)
 
     except (ValueError, TypeError):
         pass
+
+    return None
+
+
+def _array_startswith(arr: bytes, prefix: bytes) -> bool:
+    return arr[: len(prefix)] == prefix
+
+
+def solve_altcha(parameters: dict[str, t.Any], maxCounter: int = 1000) -> tuple[str, int] | None:
+    """Solves Altcha CAPTCHAs. It derives keys using PBKDF2 until the derived
+    key starts with the ``keyPrefix``` from the challenge. If the solver does not
+    finish after ``maxCounter`` iterations, returns ``None``."""
+
+    nonce = bytes.fromhex(parameters["nonce"])
+    salt = bytes.fromhex(parameters["salt"])
+    keyPrefix = bytes.fromhex(parameters["keyPrefix"])
+    cost = parameters["cost"]
+    keyLength = parameters["keyLength"]
+    # e.g. "PBKDF2/SHA-256" -> "sha256"
+    hashAlgorithm = parameters["algorithm"].split("/")[-1].replace("-", "").lower()
+
+    counter = 0
+    while counter < maxCounter:
+        # Appends the counter to the nonce, i.e. writes the counter as a big-endian 32-bit integer.
+        secret = nonce + counter.to_bytes(length=4)
+
+        key = pbkdf2_hmac(hash_name=hashAlgorithm, password=secret, salt=salt, iterations=cost, dklen=keyLength)
+        if _array_startswith(key, keyPrefix):
+            return key.hex(), counter
+
+        counter += 1
 
     return None

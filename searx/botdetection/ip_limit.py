@@ -36,7 +36,7 @@ dropped.
    https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
 
 """
-from __future__ import annotations
+
 from ipaddress import (
     IPv4Network,
     IPv6Network,
@@ -54,7 +54,6 @@ from ._helpers import (
     too_many_requests,
     logger,
 )
-
 
 logger = logger.getChild('ip_limit')
 

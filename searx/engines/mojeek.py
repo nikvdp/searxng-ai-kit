@@ -1,26 +1,38 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Mojeek (general, images, news)"""
 
-from typing import TYPE_CHECKING
-
+import base64
+import json
+import random
+import typing as t
 from datetime import datetime
 from urllib.parse import urlencode
-from lxml import html
 
+import curl_cffi
 from dateutil.relativedelta import relativedelta
-from searx.utils import eval_xpath, eval_xpath_list, extract_text
+
+from searx.exceptions import SearxEngineAPIException
+from searx.enginelib import EngineCache
+from searx.network import get, post
+from searx.result_types import EngineResults
 from searx.enginelib.traits import EngineTraits
+from searx.utils import eval_xpath, eval_xpath_list, extract_text, solve_altcha
+
+if t.TYPE_CHECKING:
+    from searx.extended_types import SXNG_Response
+    from searx.search.processors import OnlineParams
 
 about = {
-    'website': 'https://mojeek.com',
-    'wikidata_id': 'Q60747299',
-    'official_api_documentation': 'https://www.mojeek.com/support/api/search/request_parameters.html',
-    'use_official_api': False,
-    'require_api_key': False,
-    'results': 'HTML',
+    "website": "https://mojeek.com",
+    "wikidata_id": "Q60747299",
+    "official_api_documentation": "https://www.mojeek.com/support/api/search/request_parameters.html",
+    "use_official_api": False,
+    "require_api_key": False,
+    "results": "HTML",
 }
 paging = True  # paging is only supported for general search
 safesearch = True
+language_support = True
 time_range_support = True  # time range search is supported for general and news
 max_page = 10
 
@@ -30,123 +42,149 @@ categories = ["general", "web"]
 search_type = ""  # leave blank for general, other possible values: images, news
 
 results_xpath = '//ul[@class="results-standard"]/li/a[@class="ob"]'
-url_xpath = './@href'
-title_xpath = '../h2/a'
+url_xpath = "./@href"
+title_xpath = "../h2/a"
 content_xpath = '..//p[@class="s"]'
 suggestion_xpath = '//div[@class="top-info"]/p[@class="top-info spell"]/em/a'
 
 image_results_xpath = '//div[@id="results"]/div[contains(@class, "image")]'
-image_url_xpath = './a/@href'
-image_title_xpath = './a/@data-title'
-image_img_src_xpath = './a/img/@src'
+image_url_xpath = "./a/@href"
+image_title_xpath = "./a/@data-title"
+image_img_src_xpath = "./a/img/@src"
 
 news_results_xpath = '//section[contains(@class, "news-search-result")]//article'
-news_url_xpath = './/h2/a/@href'
-news_title_xpath = './/h2/a'
+news_url_xpath = ".//h2/a/@href"
+news_title_xpath = ".//h2/a"
 news_content_xpath = './/p[@class="s"]'
 
-language_param = 'lb'
-region_param = 'arc'
+language_param = "lb"
+region_param = "arc"
 
-_delta_kwargs = {'day': 'days', 'week': 'weeks', 'month': 'months', 'year': 'years'}
+_delta_kwargs = {"day": "days", "week": "weeks", "month": "months", "year": "years"}
 
-if TYPE_CHECKING:
-    import logging
-
-    logger = logging.getLogger()
-
-traits: EngineTraits
+CACHE: EngineCache
+"""Cache for storing the auth cookie after solving the CAPTCHA."""
 
 
-def init(_):
-    if search_type not in ('', 'images', 'news'):
+def setup(engine_settings: dict[str, t.Any]) -> bool | None:
+    if search_type not in ("", "images", "news"):
         raise ValueError(f"Invalid search type {search_type}")
 
+    global CACHE  # pylint: disable=global-statement
+    CACHE = EngineCache(engine_settings["engine"])
 
-def request(query, params):
+
+def _captcha_token() -> str:
+    if token := CACHE.get("chllg"):
+        return token
+
+    challenge = get(f"{base_url}/captcha/challenge").json()
+
+    solution = solve_altcha(challenge["parameters"])
+    if not solution:
+        raise SearxEngineAPIException("failed to solve CAPTCHA")
+    key, counter = solution
+
+    solution = {
+        "challenge": challenge,
+        "solution": {"counter": counter, "derivedKey": key, "time": random.randint(100, 200)},
+    }
+    solution_encoded = base64.b64encode(json.dumps(solution).encode())
+    mp = curl_cffi.CurlMime()
+    mp.addpart(name="altcha", data=solution_encoded)
+    resp = post(f"{base_url}/captcha/verify", multipart=mp)
+
+    token = resp.cookies["chllg"]
+    CACHE.set("chllg", token)
+    return token
+
+
+def request(query: str, params: "OnlineParams"):
     args = {
-        'q': query,
-        'safe': min(params['safesearch'], 1),
-        language_param: traits.get_language(params['searxng_locale'], traits.custom['language_all']),
-        region_param: traits.get_region(params['searxng_locale'], traits.custom['region_all']),
+        "q": query,
+        "safe": min(params["safesearch"], 1),
     }
 
     if search_type:
-        args['fmt'] = search_type
+        args["fmt"] = search_type
 
-    if search_type == '':
-        args['s'] = 10 * (params['pageno'] - 1)
+    # setting the page number on the first page (i.e. s=0) triggers a rate-limit
+    if search_type == "" and params["pageno"] > 1:
+        args["s"] = 10 * (params["pageno"] - 1)
 
-    if params['time_range'] and search_type != 'images':
-        kwargs = {_delta_kwargs[params['time_range']]: 1}
+    if params["time_range"] and search_type != "images":
+        kwargs = {_delta_kwargs[params["time_range"]]: 1}
         args["since"] = (datetime.now() - relativedelta(**kwargs)).strftime("%Y%m%d")  # type: ignore
         logger.debug(args["since"])
 
-    params['url'] = f"{base_url}/search?{urlencode(args)}"
+    params["url"] = f"{base_url}/search?{urlencode(args)}"
+    params["cookies"] = {
+        language_param: traits.get_language(params["searxng_locale"], traits.custom["language_all"]),
+        region_param: traits.get_region(params["searxng_locale"], traits.custom["region_all"]),
+        "chllg": _captcha_token(),
+    }
 
-    return params
 
-
-def _general_results(dom):
-    results = []
+def _general_results(dom) -> EngineResults:
+    res = EngineResults()
 
     for result in eval_xpath_list(dom, results_xpath):
-        results.append(
-            {
-                'url': extract_text(eval_xpath(result, url_xpath)),
-                'title': extract_text(eval_xpath(result, title_xpath)),
-                'content': extract_text(eval_xpath(result, content_xpath)),
-            }
+        res.add(
+            res.types.MainResult(
+                url=extract_text(eval_xpath(result, url_xpath)),
+                title=extract_text(eval_xpath(result, title_xpath)) or "",
+                content=extract_text(eval_xpath(result, content_xpath)) or "",
+            )
         )
 
     for suggestion in eval_xpath(dom, suggestion_xpath):
-        results.append({'suggestion': extract_text(suggestion)})
+        res.add(res.types.LegacyResult(suggestion=extract_text(suggestion)))
 
-    return results
+    return res
 
 
-def _image_results(dom):
-    results = []
+def _image_results(dom) -> EngineResults:
+    res = EngineResults()
 
     for result in eval_xpath_list(dom, image_results_xpath):
-        results.append(
-            {
-                'template': 'images.html',
-                'url': extract_text(eval_xpath(result, image_url_xpath)),
-                'title': extract_text(eval_xpath(result, image_title_xpath)),
-                'img_src': base_url + extract_text(eval_xpath(result, image_img_src_xpath)),  # type: ignore
-                'content': '',
-            }
+        res.add(
+            res.types.Image(
+                template="images.html",
+                url=extract_text(eval_xpath(result, image_url_xpath)),
+                title=extract_text(eval_xpath(result, image_title_xpath)) or "",
+                img_src=base_url + extract_text(eval_xpath(result, image_img_src_xpath)),  # type: ignore
+                content="",
+            )
         )
 
-    return results
+    return res
 
 
-def _news_results(dom):
-    results = []
+def _news_results(dom) -> EngineResults:
+    res = EngineResults()
 
     for result in eval_xpath_list(dom, news_results_xpath):
-        results.append(
-            {
-                'url': extract_text(eval_xpath(result, news_url_xpath)),
-                'title': extract_text(eval_xpath(result, news_title_xpath)),
-                'content': extract_text(eval_xpath(result, news_content_xpath)),
-            }
+        res.add(
+            res.types.MainResult(
+                url=extract_text(eval_xpath(result, news_url_xpath)),
+                title=extract_text(eval_xpath(result, news_title_xpath)) or "",
+                content=extract_text(eval_xpath(result, news_content_xpath)) or "",
+            )
         )
 
-    return results
+    return res
 
 
-def response(resp):
-    dom = html.fromstring(resp.text)
+def response(resp: "SXNG_Response") -> EngineResults:
+    dom = resp.html()
 
-    if search_type == '':
+    if search_type == "":
         return _general_results(dom)
 
-    if search_type == 'images':
+    if search_type == "images":
         return _image_results(dom)
 
-    if search_type == 'news':
+    if search_type == "news":
         return _news_results(dom)
 
     raise ValueError(f"Invalid search type {search_type}")
@@ -154,17 +192,25 @@ def response(resp):
 
 def fetch_traits(engine_traits: EngineTraits):
     # pylint: disable=import-outside-toplevel
-    from searx import network
-    from searx.locales import get_official_locales, region_tag
-    from babel import Locale, UnknownLocaleError
     import contextlib
 
-    resp = network.get(base_url + "/preferences", headers={'Accept-Language': 'en-US,en;q=0.5'})
-    dom = html.fromstring(resp.text)  # type: ignore
+    from babel import Locale, UnknownLocaleError
+
+    from searx.locales import get_official_locales, region_tag
+
+    resp = get(
+        base_url + "/preferences",
+        headers={"Accept-Language": "en-US,en;q=0.5"},
+        timeout=5,
+    )
+    if not resp.ok:
+        raise RuntimeError("Response from Mojeek is not OK.")
+
+    dom = resp.html()
 
     languages = eval_xpath_list(dom, f'//select[@name="{language_param}"]/option/@value')
 
-    engine_traits.custom['language_all'] = languages[0]
+    engine_traits.custom["language_all"] = languages[0]
 
     for code in languages[1:]:
         with contextlib.suppress(UnknownLocaleError):
@@ -173,7 +219,7 @@ def fetch_traits(engine_traits: EngineTraits):
 
     regions = eval_xpath_list(dom, f'//select[@name="{region_param}"]/option/@value')
 
-    engine_traits.custom['region_all'] = regions[1]
+    engine_traits.custom["region_all"] = regions[1]
 
     for code in regions[2:]:
         for locale in get_official_locales(code, engine_traits.languages):

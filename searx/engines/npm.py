@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""npms.io
-
-"""
+"""npms.io"""
 
 from urllib.parse import urlencode
 from dateutil import parser
-
 
 about = {
     "website": "https://npms.io/",

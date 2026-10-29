@@ -64,7 +64,7 @@
     {%- if search_engine.enable_http -%}
       <p>{{- icon_big('exclamation-sign', 'No HTTPS') -}}{{- _('No HTTPS')-}}</p>
     {% endif -%}
-    {%- if reliabilities.get(search_engine.name, {}).errors or reliabilities.get(search_engine.name, {}).checker -%}
+    {%- if reliabilities.get(search_engine.name, {}).errors -%}
       <a href="{{ url_for('stats', engine=search_engine.name|e) }}" {{- ' ' -}}
          title="{{ _('View error logs and submit a bug report') }}">
       {{- _('View error logs and submit a bug report') -}}
@@ -109,7 +109,6 @@
 
 {%- macro engine_reliability(engine_name) -%}
   {%- set r = reliabilities.get(engine_name, {}).get('reliability', None) -%}
-  {%- set checker_result = reliabilities.get(engine_name, {}).get('checker', []) -%}
   {%- set errors = reliabilities.get(engine_name, {}).get('errors', []) -%}
   {%- if r != None -%}
     {%- if r <= 50 -%}
@@ -124,7 +123,7 @@
   {% else %}
     {%- set r = '' -%}
   {%- endif -%}
-  {%- if checker_result or errors -%}
+  {%- if errors -%}
     <td class="{{ label }} column-reliability">{{- '' -}}
       <a href="{{ url_for('stats', engine=engine_name|e) }}">{{- '' -}}
         <span>
@@ -132,9 +131,6 @@
         </span>{{- '' -}}
       </a>{{- '' -}}
       <div class="engine-tooltip" role="tooltip" id="{{engine_name}}_reliability">
-        {%- if checker_result -%}
-          <p>{{ _("Failed checker test(s): ") }} {{ ', '.join(checker_result) }}</p>
-        {%- endif -%}
         {%- if errors -%}<p>{{ _('Errors:') }}</p>{%- endif -%}
         {%- for error in errors -%}
           <p>{{ error }}</p>{{- '' -}}
@@ -155,6 +151,16 @@
 
   <h1>{{ _('Preferences') }}</h1>
 
+  {%- if request.args.get('preferences_preview_only') == 'true' -%}
+    <div class="dialog-warning-block">
+      <p>{{ _("This is a preview of the settings used by the 'Search URL' you used to get here.") }}</p>
+      <ul>
+        <li>{{ _('Press save to copy these preferences to your browser.') }}</li>
+        <li>{{ _('Click here to view your browser preferences instead:') }} <a href="{{ url_for('preferences') }}">/preferences</a></li>
+      </ul>
+    </div>
+  {%- endif -%}
+
   <form id="search_form" method="post" action="{{ url_for('preferences') }}" autocomplete="off">
     {{- tabs_open() -}}
 
@@ -174,19 +180,19 @@
     {%- if 'autocomplete' not in locked_preferences -%}
       {%- include 'simple/preferences/autocomplete.html' -%}
     {%- endif -%}
-    {%- if 'favicon' not in locked_preferences -%}
+    {%- if 'favicon_resolver' not in locked_preferences -%}
       {%- include 'simple/preferences/favicon.html' -%}
+    {%- endif -%}
+    {%- if 'doi_resolver' not in locked_preferences -%}
+      {%- include 'simple/preferences/doi_resolver.html' -%}
     {%- endif -%}
     {% if 'safesearch' not in locked_preferences %}
       {%- include 'simple/preferences/safesearch.html' -%}
     {%- endif -%}
-    {%- include 'simple/preferences/tokens.html' -%}
-    {{- plugin_preferences('general') -}}
-
-
-    {%- if 'doi_resolver' not in locked_preferences %}
-      {%- include 'simple/preferences/doi_resolver.html' -%}
+    {%- if engines_with_tokens -%}
+      {%- include 'simple/preferences/tokens.html' -%}
     {%- endif -%}
+    {{- plugin_preferences('general') -}}
     {{- tab_footer() -}}
 
     {# tab: ui #}
@@ -200,9 +206,6 @@
     {%- endif -%}
     {%- if 'results_on_new_tab' not in locked_preferences -%}
       {%- include 'simple/preferences/results_on_new_tab.html' -%}
-    {%- endif -%}
-    {%- if 'infinite_scroll' not in locked_preferences -%}
-      {%- include 'simple/preferences/infinite_scroll.html' -%}
     {%- endif -%}
     {%- if 'search_on_category_select' not in locked_preferences -%}
       {%- include 'simple/preferences/search_on_category_select.html' -%}

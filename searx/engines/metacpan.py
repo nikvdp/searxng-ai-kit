@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""metacpan
-"""
+"""metacpan"""
 
 from urllib.parse import urlunparse
-from json import dumps
 
 # about
 about = {
@@ -16,7 +14,7 @@ about = {
 }
 
 # engine dependent config
-number_of_results = 20  # Don't put this over 5000
+page_size = 20  # Don't put this over 5000
 categories = ["it", "packages"]
 disabled = True
 shortcut = "cpan"
@@ -45,7 +43,7 @@ query_data_template = {
         {"date": {"order": "desc"}},
     ],
     '_source': ['documentation', "abstract"],
-    'size': number_of_results,
+    'size': page_size,
 }
 search_url = urlunparse(["https", "fastapi.metacpan.org", "/v1/file/_search", "", "", ""])
 
@@ -55,8 +53,8 @@ def request(query, params):
     params["method"] = "POST"
     query_data = query_data_template
     query_data["query"]["multi_match"]["query"] = query
-    query_data["from"] = (params["pageno"] - 1) * number_of_results
-    params["data"] = dumps(query_data)
+    query_data["from"] = (params["pageno"] - 1) * page_size
+    params["json"] = query_data
     return params
 
 

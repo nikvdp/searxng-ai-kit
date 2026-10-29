@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Open Meteo (weather)"""
 
+import typing as t
+
 from urllib.parse import urlencode
 from datetime import datetime
 
 from searx.result_types import EngineResults, WeatherAnswer
 from searx import weather
-
 
 about = {
     "website": "https://open-meteo.com",
@@ -106,16 +107,16 @@ WMO_TO_CONDITION: dict[int, weather.WeatherConditionType] = {
 }
 
 
-def _weather_data(location: weather.GeoLocation, data: dict):
+def _weather_data(location: weather.GeoLocation, data: dict[str, t.Any]):
 
     return WeatherAnswer.Item(
         location=location,
-        temperature=weather.Temperature(unit="°C", value=data["temperature_2m"]),
+        temperature=weather.Temperature(val=data["temperature_2m"], unit="°C"),
         condition=WMO_TO_CONDITION[data["weather_code"]],
-        feels_like=weather.Temperature(unit="°C", value=data["apparent_temperature"]),
+        feels_like=weather.Temperature(val=data["apparent_temperature"], unit="°C"),
         wind_from=weather.Compass(data["wind_direction_10m"]),
-        wind_speed=weather.WindSpeed(data["wind_speed_10m"], unit="km/h"),
-        pressure=weather.Pressure(data["pressure_msl"], unit="hPa"),
+        wind_speed=weather.WindSpeed(val=data["wind_speed_10m"], unit="km/h"),
+        pressure=weather.Pressure(val=data["pressure_msl"], unit="hPa"),
         humidity=weather.RelativeHumidity(data["relative_humidity_2m"]),
         cloud_cover=data["cloud_cover"],
     )

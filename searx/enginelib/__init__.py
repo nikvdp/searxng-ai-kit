@@ -3,13 +3,14 @@
 
 - :py:obj:`searx.enginelib.EngineCache`
 - :py:obj:`searx.enginelib.Engine`
+- :py:obj:`searx.enginelib.EngineAbout`
 - :py:obj:`searx.enginelib.traits`
 
 There is a command line for developer purposes and for deeper analysis.  Here is
 an example in which the command line is called in the development environment::
 
-  $ ./manage pyenv.cmd bash --norc --noprofile
-  (py3) python -m searx.enginelib --help
+  $ ./manage dev.env
+  (dev.env)$ python -m searx.enginelib --help
 
 .. hint::
 
@@ -22,25 +23,32 @@ an example in which the command line is called in the development environment::
 -----
 
 """
-from __future__ import annotations
 
-__all__ = ["EngineCache", "Engine", "ENGINES_CACHE"]
+__all__ = ["EngineCache", "Engine", "EngineAbout", "ENGINES_CACHE"]
 
-from typing import List, Callable, TYPE_CHECKING, Any
+import typing as t
+import abc
+from collections.abc import Callable
+import logging
 import string
 import typer
+import msgspec
 
-from ..cache import ExpireCache, ExpireCacheCfg
+from ..cache import ExpireCacheSQLite, ExpireCacheCfg
 
-if TYPE_CHECKING:
+if t.TYPE_CHECKING:
     from searx.enginelib import traits
+    from searx.enginelib.traits import EngineTraits
+    from searx.extended_types import SXNG_Response
+    from searx.result_types import EngineResults
+    from searx.search.processors import OfflineParamTypes, OnlineParamTypes, ProcessorType
 
-
-ENGINES_CACHE = ExpireCache.build_cache(
+ENGINES_CACHE: ExpireCacheSQLite = ExpireCacheSQLite.build_cache(
     ExpireCacheCfg(
         name="ENGINES_CACHE",
         MAXHOLD_TIME=60 * 60 * 24 * 7,  # 7 days
-        MAINTENANCE_PERIOD=60 * 60,  # 2h
+        MAINTENANCE_PERIOD=60 * 60,  # 1h
+        MAX_VALUE_LEN=1024 * 1024 * 1024,  # 1MB
     )
 )
 """Global :py:obj:`searx.cache.ExpireCacheSQLite` instance where the cached
@@ -62,13 +70,13 @@ def state():
     title = f"properties of {ENGINES_CACHE.cfg.name}"
     print(title)
     print("=" * len(title))
-    print(str(ENGINES_CACHE.properties))  # type: ignore
+    print(str(ENGINES_CACHE.properties))
 
 
 @app.command()
-def maintenance(force: bool = True):
+def maintenance(force: bool = True, truncate: bool = False):
     """Carry out maintenance on cache of the engines."""
-    ENGINES_CACHE.maintenance(force=force)
+    ENGINES_CACHE.maintenance(force=force, truncate=truncate)
 
 
 class EngineCache:
@@ -106,8 +114,8 @@ class EngineCache:
     For introspection of the DB, jump into developer environment and run command to
     show cache state::
 
-        $ ./manage pyenv.cmd bash --norc --noprofile
-        (py3) python -m searx.enginelib cache state
+        $ ./manage dev.env
+        (dev.env)$ python -m searx.enginelib cache state
 
         cache tables and key/values
         ===========================
@@ -152,11 +160,12 @@ class EngineCache:
     """
 
     def __init__(self, engine_name: str, expire: int | None = None):
-        self.expire = expire or ENGINES_CACHE.cfg.MAXHOLD_TIME
+        self.expire: int = expire or ENGINES_CACHE.cfg.MAXHOLD_TIME
         _valid = "-_." + string.ascii_letters + string.digits
-        self.table_name = "".join([c if c in _valid else "_" for c in engine_name])
+        # engine_name is a table and SQL table names must start with a letter
+        self.table_name: str = "eng_" + "".join([c if c in _valid else "_" for c in engine_name])
 
-    def set(self, key: str, value: Any, expire: int | None = None) -> bool:
+    def set(self, key: str, value: t.Any, expire: int | None = None) -> bool:
         return ENGINES_CACHE.set(
             key=key,
             value=value,
@@ -164,112 +173,14 @@ class EngineCache:
             ctx=self.table_name,
         )
 
-    def get(self, key: str, default=None) -> Any:
+    def get(self, key: str, default: t.Any = None) -> t.Any:
         return ENGINES_CACHE.get(key, default=default, ctx=self.table_name)
 
     def secret_hash(self, name: str | bytes) -> str:
         return ENGINES_CACHE.secret_hash(name=name)
 
 
-class Engine:  # pylint: disable=too-few-public-methods
-    """Class of engine instances build from YAML settings.
-
-    Further documentation see :ref:`general engine configuration`.
-
-    .. hint::
-
-       This class is currently never initialized and only used for type hinting.
-    """
-
-    # Common options in the engine module
-
-    engine_type: str
-    """Type of the engine (:ref:`searx.search.processors`)"""
-
-    paging: bool
-    """Engine supports multiple pages."""
-
-    time_range_support: bool
-    """Engine supports search time range."""
-
-    safesearch: bool
-    """Engine supports SafeSearch"""
-
-    language_support: bool
-    """Engine supports languages (locales) search."""
-
-    language: str
-    """For an engine, when there is ``language: ...`` in the YAML settings the engine
-    does support only this one language:
-
-    .. code:: yaml
-
-      - name: google french
-        engine: google
-        language: fr
-    """
-
-    region: str
-    """For an engine, when there is ``region: ...`` in the YAML settings the engine
-    does support only this one region::
-
-    .. code:: yaml
-
-      - name: google belgium
-        engine: google
-        region: fr-BE
-    """
-
-    fetch_traits: Callable
-    """Function to to fetch engine's traits from origin."""
-
-    traits: traits.EngineTraits
-    """Traits of the engine."""
-
-    # settings.yml
-
-    categories: List[str]
-    """Specifies to which :ref:`engine categories` the engine should be added."""
-
-    name: str
-    """Name that will be used across SearXNG to define this engine.  In settings, on
-    the result page .."""
-
-    engine: str
-    """Name of the python file used to handle requests and responses to and from
-    this search engine (file name from :origin:`searx/engines` without
-    ``.py``)."""
-
-    enable_http: bool
-    """Enable HTTP (by default only HTTPS is enabled)."""
-
-    shortcut: str
-    """Code used to execute bang requests (``!foo``)"""
-
-    timeout: float
-    """Specific timeout for search-engine."""
-
-    display_error_messages: bool
-    """Display error messages on the web UI."""
-
-    proxies: dict[str, dict[str, str]]
-    """Set proxies for a specific engine (YAML):
-
-    .. code:: yaml
-
-       proxies :
-         http:  socks5://proxy:port
-         https: socks5://proxy:port
-    """
-
-    disabled: bool
-    """To disable by default the engine, but not deleting it.  It will allow the
-    user to manually activate it in the settings."""
-
-    inactive: bool
-    """Remove the engine from the settings (*disabled & removed*)."""
-
-    about: dict
+class EngineAbout(msgspec.Struct, kw_only=True):
     """Additional fields describing the engine.
 
     .. code:: yaml
@@ -283,17 +194,225 @@ class Engine:  # pylint: disable=too-few-public-methods
           results: HTML
     """
 
-    using_tor_proxy: bool
+    # pylint: disable=too-few-public-methods
+
+    website: str = ""
+    """Official web-site of the origin."""
+
+    wikidata_id: str = ""
+    """`Wikidata ID <https://www.wikidata.org/wiki/Wikidata:Identifiers>`_"""
+
+    official_api_documentation: str = ""
+    """URL of the official API (regardless of whether it is used)"""
+
+    use_official_api: bool = False
+    """SearXNG engine makes use of the official API or not"""
+
+    require_api_key: bool = False
+    """API requires a key or not."""
+
+    results: str = ""
+    """Data format of the source (online-engines: of the response)."""
+
+    description: str = ""
+    """Brief description of the engine and where it gets its data from.
+
+    This value should only be set as long as no description of the data source
+    is available via a :py:obj:`EngineAbout.wikidata_id`."""
+
+    language: str = ""
+    """Deprecated! Migrate your setting from `engine.about.language` to
+    `engine.language`"""
+
+
+class Engine(abc.ABC):  # pylint: disable=too-few-public-methods
+    """Class of engine instances build from YAML settings.
+
+    Further documentation see :ref:`general engine configuration`.
+
+    The defaults are taken from :py:obj:`searx.engines.ENGINE_DEFAULT_ARGS`.
+
+    .. hint::
+
+       This class is currently never initialized and only used for type hinting.
+    """
+
+    logger: logging.Logger
+
+    # Common options of the engine module
+
+    engine_type: "ProcessorType" = "online"
+    """Type of the engine (:ref:`searx.search.processors`)"""
+
+    paging: bool = False
+    """Engine supports multiple pages."""
+
+    max_page: int = 0
+    """If the engine supports paging, then this is the value for the last page
+    that is still supported. ``0`` means unlimited numbers of pages."""
+
+    time_range_support: bool = False
+    """Engine supports search time range."""
+
+    safesearch: bool = False
+    """Engine supports SafeSearch"""
+
+    language_support: bool = False
+    """Engine supports languages (locales) search."""
+
+    fetch_traits: "Callable[[EngineTraits, bool], None]"
+    """Function to to fetch engine's traits from origin."""
+
+    traits: "traits.EngineTraits"
+    """Traits of the engine."""
+
+    # settings.yml
+
+    name: str
+    """Name that will be used across SearXNG to define this engine.  In settings, on
+    the result page .."""
+
+    engine: str
+    """Name of the python file used to handle requests and responses to and from
+    this search engine (file name from :origin:`searx/engines` without
+    ``.py``)."""
+
+    categories: list[str] = ["general"]
+    """Specifies to which :ref:`engine categories` the engine should be added."""
+
+    language: str = ""
+    """If the engine supports only one language, this language is specified here
+    (``en``, ``de``, ``"no"`` or ..); otherwise, the value remains empty. For
+    the YAML configuration: think of the `YAML-Norway problem
+    <https://ruuda.nl/2023/the-yaml-document-from-hell#the-norway-problem>`_
+
+    .. code:: yaml
+
+      - name: google norway
+        engine: google
+        language: "no"
+
+    Depending on ``language_support``, this value has similar but also slightly
+    different meanings.
+
+    - When ``language_support`` is **true**, the map of
+      :py:obj:`traits.EngineTraits.languages` is reduced to the selected
+      language
+
+    - When ``language_support`` is **false**, then the implementation of the
+      engine only supports this one ``language``
+    """
+
+    region: str = ""
+    """For an engine, when there is ``region: ...`` in the YAML settings the engine
+    does support only this one region:
+
+    .. code:: yaml
+
+      - name: google belgium
+        engine: google
+        region: fr-BE
+    """
+
+    enable_http: bool
+    """Enable HTTP (by default only HTTPS is enabled)."""
+
+    enable_http3: bool = False
+    """Enables the use of HTTP/3 if available"""
+
+    shortcut: str
+    """Code used to execute bang requests (``!foo``)"""
+
+    timeout: float
+    """Specific timeout for search-engine."""
+
+    display_error_messages: bool
+    """Display error messages on the web UI."""
+
+    disabled: bool = False
+    """To disable by default the engine, but not deleting it.  It will allow the
+    user to manually activate it in the settings."""
+
+    inactive: bool = False
+    """Remove the engine from the settings (*disabled & removed*)."""
+
+    about: EngineAbout = EngineAbout()
+    """Additional fields describing the engine."""
+
+    using_tor_proxy: bool = False
     """Using tor proxy (``true``) or not (``false``) for this engine."""
 
-    send_accept_language_header: bool
-    """When this option is activated, the language (locale) that is selected by
-    the user is used to build and send a ``Accept-Language`` header in the
-    request to the origin search engine."""
+    send_accept_language_header: bool = True
+    """When this option is activated (default), the language (locale) that is
+    selected by the user is used to build and send a ``Accept-Language`` header
+    in the request to the origin search engine."""
 
-    tokens: List[str]
+    tokens: list[str] = []
     """A list of secret tokens to make this engine *private*, more details see
     :ref:`private engines`."""
 
-    weight: int
+    weight: float = 1.0
     """Weighting of the results of this engine (:ref:`weight <settings engines>`)."""
+
+    proxies: dict[str, dict[str, str]]
+    """Set proxies for a specific engine (YAML):
+
+    .. code:: yaml
+
+       proxies :
+         http:  socks5://proxy:port
+         https: socks5://proxy:port
+    """
+
+    def setup(self, engine_settings: dict[str, t.Any]) -> bool | None:  # pylint: disable=unused-argument
+        """Dynamic setup of the engine settings.
+
+        With this method, the engine's setup is carried out.  For example, to
+        check or dynamically adapt the values handed over in the parameter
+        ``engine_settings``.
+
+        Whether the initialization was successful can be indicated by the return
+        value ``True`` or even ``False``.
+
+        - If no return value (``None`` ) is given from this method , this is
+          equivalent to ``True``.
+
+        - If an exception is thrown as part of the initialization, this is
+          equivalent to ``False``.
+
+        The method is optional and is called **synchronously** as part of the
+        initialization of the service and is therefore only suitable for simple
+        (local) exams/changes at the engine setting.
+
+        The :py:obj:`Engine.init` method must be used for longer tasks in which
+        values of a remote must be determined, for example.
+        """
+        return True
+
+    def init(self, engine_settings: dict[str, t.Any]) -> bool | None:  # pylint: disable=unused-argument
+        """Initialization of the engine.
+
+        The method is optional and called **asynchronous** (in a thread).  The
+        method is comparable to :py:obj:`Engine.setup`, it is suitable, for
+        caching data that first needs to be requested from a remote.
+
+        The method is optional and runs **asynchronously** (in a thread), it is
+        comparable to :py:obj:`Engine.setup`. For instance, it is suitable for
+        caching data that first needs to be requested from a remote source.
+
+        The evaluation of the return value is analogous to :py:obj:`Engine.setup`.
+        """
+        return True
+
+    @abc.abstractmethod
+    def search(self, query: str, params: "OfflineParamTypes") -> "EngineResults":
+        """Search method of the ``offline`` engines"""
+
+    @abc.abstractmethod
+    def request(self, query: str, params: "OnlineParamTypes") -> None:
+        """Method to build the parameters for the request of an ``online``
+        engine."""
+
+    @abc.abstractmethod
+    def response(self, resp: "SXNG_Response") -> "EngineResults":
+        """Method to parse the response of an ``online`` engine."""

@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Raise exception for an HTTP response is an error.
+"""Raise exception for an HTTP response is an error."""
 
-"""
-
+import typing as t
 from searx.exceptions import (
     SearxEngineCaptchaException,
     SearxEngineTooManyRequestsException,
@@ -10,8 +9,11 @@ from searx.exceptions import (
 )
 from searx import get_setting
 
+if t.TYPE_CHECKING:
+    from searx.extended_types import SXNG_Response
 
-def is_cloudflare_challenge(resp):
+
+def is_cloudflare_challenge(resp: "SXNG_Response"):
     if resp.status_code in [429, 503]:
         if ('__cf_chl_jschl_tk__=' in resp.text) or (
             '/cdn-cgi/challenge-platform/' in resp.text
@@ -24,11 +26,11 @@ def is_cloudflare_challenge(resp):
     return False
 
 
-def is_cloudflare_firewall(resp):
+def is_cloudflare_firewall(resp: "SXNG_Response"):
     return resp.status_code == 403 and '<span class="cf-error-code">1020</span>' in resp.text
 
 
-def raise_for_cloudflare_captcha(resp):
+def raise_for_cloudflare_captcha(resp: "SXNG_Response"):
     if resp.headers.get('Server', '').startswith('cloudflare'):
         if is_cloudflare_challenge(resp):
             # https://support.cloudflare.com/hc/en-us/articles/200170136-Understanding-Cloudflare-Challenge-Passage-Captcha-
@@ -44,26 +46,23 @@ def raise_for_cloudflare_captcha(resp):
             )
 
 
-def raise_for_recaptcha(resp):
+def raise_for_recaptcha(resp: "SXNG_Response"):
     if resp.status_code == 503 and '"https://www.google.com/recaptcha/' in resp.text:
         raise SearxEngineCaptchaException(
             message='ReCAPTCHA', suspended_time=get_setting('search.suspended_times.recaptcha_SearxEngineCaptcha')
         )
 
 
-def raise_for_captcha(resp):
+def raise_for_captcha(resp: "SXNG_Response"):
     raise_for_cloudflare_captcha(resp)
     raise_for_recaptcha(resp)
 
 
-def raise_for_httperror(resp):
-    """Raise exception for an HTTP response is an error.
-
-    Args:
-        resp (requests.Response): Response to check
+def raise_for_httperror(resp: "SXNG_Response") -> None:
+    """Raise an exception if the HTTP response is an error.
 
     Raises:
-        requests.HTTPError: raise by resp.raise_for_status()
+        curl_cffi.requests.exceptions.HTTPError: raised by resp.raise_for_status()
         searx.exceptions.SearxEngineAccessDeniedException: raise when the HTTP status code is 402 or 403.
         searx.exceptions.SearxEngineTooManyRequestsException: raise when the HTTP status code is 429.
         searx.exceptions.SearxEngineCaptchaException: raise when if CATPCHA challenge is detected.

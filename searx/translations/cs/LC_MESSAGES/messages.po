@@ -19,26 +19,27 @@
 # zenobit <zenobit@users.noreply.translate.codeberg.org>, 2025.
 # Fjuro <fjuro@users.noreply.translate.codeberg.org>, 2025.
 # return42 <return42@noreply.codeberg.org>, 2025.
-# Fjuro <fjuro@noreply.codeberg.org>, 2025.
+# Fjuro <fjuro@noreply.codeberg.org>, 2025, 2026.
 # Fjuro <git@alius.cz>, 2025.
 # L33P <l33p@noreply.codeberg.org>, 2025.
 # radekjuthner <radekjuthner@noreply.codeberg.org>, 2025.
 msgid ""
 msgstr ""
-"Project-Id-Version:  searx\n"
+"Project-Id-Version: searx\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2025-08-28 08:53+0000\n"
-"PO-Revision-Date: 2025-07-22 10:57+0000\n"
-"Last-Translator: Fjuro <fjuro@alius.cz>\n"
+"POT-Creation-Date: 2026-10-09 19:03+0000\n"
+"PO-Revision-Date: 2026-10-10 22:27+0000\n"
+"Last-Translator: Fjuro <fjuro@noreply.codeberg.org>\n"
 "Language: cs\n"
-"Language-Team: Czech "
-"<https://translate.codeberg.org/projects/searxng/searxng/cs/>\n"
-"Plural-Forms: nplurals=4; plural=(n == 1 && n % 1 == 0) ? 0 : (n >= 2 && "
-"n <= 4 && n % 1 == 0) ? 1: (n % 1 != 0 ) ? 2 : 3;\n"
+"Language-Team: Czech <https://translate.codeberg.org/projects/searxng/"
+"searxng/cs/>\n"
+"Plural-Forms: nplurals=4; plural=(n == 1 && n % 1 == 0) ? 0 : (n >= 2 && n "
+"<= 4 && n % 1 == 0) ? 1: (n % 1 != 0 ) ? 2 : 3;\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Generated-By: Babel 2.17.0\n"
+"Generated-By: Babel 2.18.0\n"
+"X-Generator: Weblate 2026.10.1\n"
 
 #. CONSTANT_NAMES['NO_SUBGROUPING']
 #: searx/searxng.msg
@@ -50,6 +51,21 @@ msgstr "bez dalších podskupin"
 msgid "other"
 msgstr "ostatní"
 
+#. CATEGORY_NAMES['APPS']
+#: searx/searxng.msg
+msgid "apps"
+msgstr "aplikace"
+
+#. CATEGORY_NAMES['BLOGS']
+#: searx/searxng.msg
+msgid "blogs"
+msgstr "blogy"
+
+#. CATEGORY_NAMES['DICTIONARIES']
+#: searx/searxng.msg
+msgid "dictionaries"
+msgstr "slovníky"
+
 #. CATEGORY_NAMES['FILES']
 #: searx/searxng.msg
 msgid "files"
@@ -60,105 +76,120 @@ msgstr "soubory"
 msgid "general"
 msgstr "obecné"
 
-#. CATEGORY_NAMES['MUSIC']
+#. CATEGORY_NAMES['ICONS']
 #: searx/searxng.msg
-msgid "music"
-msgstr "hudba"
-
-#. CATEGORY_NAMES['SOCIAL_MEDIA']
-#: searx/searxng.msg
-msgid "social media"
-msgstr "sociální sítě"
+msgid "icons"
+msgstr "ikony"
 
 #. CATEGORY_NAMES['IMAGES']
 #: searx/searxng.msg
 msgid "images"
 msgstr "obrázky"
 
-#. CATEGORY_NAMES['VIDEOS']
-#: searx/searxng.msg
-msgid "videos"
-msgstr "videa"
-
-#. CATEGORY_NAMES['RADIO']
-#: searx/engines/radio_browser.py:151 searx/searxng.msg
-msgid "radio"
-msgstr "rádio"
-
-#. CATEGORY_NAMES['TV']
-#: searx/searxng.msg
-msgid "tv"
-msgstr "tv"
-
 #. CATEGORY_NAMES['IT']
 #: searx/searxng.msg
 msgid "it"
-msgstr "IT"
+msgstr "it"
 
-#. CATEGORY_NAMES['NEWS']
+#. CATEGORY_NAMES['LYRICS']
 #: searx/searxng.msg
-msgid "news"
-msgstr "zprávy"
+msgid "lyrics"
+msgstr "texty písní"
 
 #. CATEGORY_NAMES['MAP']
 #: searx/searxng.msg
 msgid "map"
 msgstr "mapy"
 
+#. CATEGORY_NAMES['MOVIES']
+#: searx/searxng.msg
+msgid "movies"
+msgstr "filmy"
+
+#. CATEGORY_NAMES['MUSIC']
+#: searx/searxng.msg
+msgid "music"
+msgstr "hudba"
+
+#. CATEGORY_NAMES['NEWS']
+#: searx/searxng.msg
+msgid "news"
+msgstr "zprávy"
+
 #. CATEGORY_NAMES['ONIONS']
 #: searx/searxng.msg
 msgid "onions"
 msgstr "cibule"
+
+#. CATEGORY_NAMES['PACKAGES']
+#: searx/searxng.msg
+msgid "packages"
+msgstr "balíčky"
+
+#. CATEGORY_NAMES['Q_A']
+#: searx/searxng.msg
+msgid "q&a"
+msgstr "otázky a odpovědi"
+
+#. CATEGORY_NAMES['RADIO']
+#: searx/engines/radio_browser.py:160 searx/searxng.msg
+msgid "radio"
+msgstr "rádio"
+
+#. CATEGORY_NAMES['REPOS']
+#: searx/searxng.msg
+msgid "repos"
+msgstr "repozitáře"
 
 #. CATEGORY_NAMES['SCIENCE']
 #: searx/searxng.msg
 msgid "science"
 msgstr "věda"
 
-#. CATEGORY_GROUPS['APPS']
+#. CATEGORY_NAMES['SCIENTIFIC PUBLICATIONS']
 #: searx/searxng.msg
-msgid "apps"
-msgstr "aplikace"
+msgid "scientific publications"
+msgstr "vědecké publikace"
 
-#. CATEGORY_GROUPS['DICTIONARIES']
+#. CATEGORY_NAMES['SOCIAL_MEDIA']
 #: searx/searxng.msg
-msgid "dictionaries"
-msgstr "slovníky"
+msgid "social media"
+msgstr "sociální sítě"
 
-#. CATEGORY_GROUPS['LYRICS']
-#: searx/searxng.msg
-msgid "lyrics"
-msgstr "texty písní"
-
-#. CATEGORY_GROUPS['PACKAGES']
-#: searx/searxng.msg
-msgid "packages"
-msgstr "balíčky"
-
-#. CATEGORY_GROUPS['Q_A']
-#: searx/searxng.msg
-msgid "q&a"
-msgstr "otázky a odpovědi"
-
-#. CATEGORY_GROUPS['REPOS']
-#: searx/searxng.msg
-msgid "repos"
-msgstr "repozitáře"
-
-#. CATEGORY_GROUPS['SOFTWARE_WIKIS']
+#. CATEGORY_NAMES['SOFTWARE_WIKIS']
 #: searx/searxng.msg
 msgid "software wikis"
 msgstr "softwarové wikipédie"
 
-#. CATEGORY_GROUPS['WEB']
+#. CATEGORY_NAMES['STOCK_IMAGES']
+#: searx/searxng.msg
+msgid "stock images"
+msgstr "obrázky z fotobanky"
+
+#. CATEGORY_NAMES['TRANSLATE']
+#: searx/searxng.msg
+msgid "translate"
+msgstr "překladač"
+
+#. CATEGORY_NAMES['TV']
+#: searx/searxng.msg
+msgid "tv"
+msgstr "tv"
+
+#. CATEGORY_NAMES['VIDEOS']
+#: searx/searxng.msg
+msgid "videos"
+msgstr "videa"
+
+#. CATEGORY_NAMES['WEATHER']
+#: searx/searxng.msg
+msgid "weather"
+msgstr "počasí"
+
+#. CATEGORY_NAMES['WEB']
 #: searx/searxng.msg
 msgid "web"
 msgstr "web"
-
-#. CATEGORY_GROUPS['SCIENTIFIC PUBLICATIONS']
-#: searx/searxng.msg
-msgid "scientific publications"
-msgstr "vědecké publikace"
 
 #. STYLE_NAMES['AUTO']
 #: searx/searxng.msg
@@ -186,7 +217,7 @@ msgid "Uptime"
 msgstr "Doba provozu"
 
 #. BRAND_CUSTOM_LINKS['ABOUT']
-#: searx/searxng.msg searx/templates/simple/base.html:46
+#: searx/searxng.msg searx/templates/simple/base.html:50
 msgid "About"
 msgstr "O SearXNG"
 
@@ -506,7 +537,7 @@ msgid "active users"
 msgstr "aktivní uživatelé"
 
 #. SOCIAL_MEDIA_TERMS['COMMENTS']
-#: searx/engines/discourse.py:157 searx/engines/hackernews.py:82
+#: searx/engines/discourse.py:157 searx/engines/hackernews.py:83
 #: searx/engines/lemmy.py:130 searx/searxng.msg
 msgid "comments"
 msgstr "komentáře"
@@ -522,7 +553,7 @@ msgid "community"
 msgstr "komunita"
 
 #. SOCIAL_MEDIA_TERMS['POINTS']
-#: searx/engines/hackernews.py:82 searx/searxng.msg
+#: searx/engines/hackernews.py:83 searx/searxng.msg
 msgid "points"
 msgstr "body"
 
@@ -532,7 +563,7 @@ msgid "title"
 msgstr "název"
 
 #. SOCIAL_MEDIA_TERMS['AUTHOR']
-#: searx/engines/hackernews.py:85 searx/searxng.msg
+#: searx/engines/hackernews.py:86 searx/searxng.msg
 msgid "author"
 msgstr "autor"
 
@@ -551,28 +582,120 @@ msgstr "zavřené"
 msgid "answered"
 msgstr "zodpovězené"
 
-#: searx/webapp.py:329
+#: searx/webapp.py:326
 msgid "No item found"
 msgstr "Nic nenalezeno"
 
-#: searx/engines/qwant.py:291
-#: searx/templates/simple/result_templates/images.html:23 searx/webapp.py:331
+#: searx/engines/qwant.py:283
+#: searx/templates/simple/result_templates/images.html:62 searx/webapp.py:328
 msgid "Source"
 msgstr "zdroj"
 
-#: searx/webapp.py:333
+#: searx/webapp.py:330
 msgid "Error loading the next page"
 msgstr "Chyba při načítání další stránky"
 
-#: searx/webapp.py:476 searx/webapp.py:874
+#: searx/webapp.py:332
+msgid "close"
+msgstr "zavřít"
+
+#: searx/webapp.py:333
+msgid "How to navigate SearXNG with hotkeys"
+msgstr "Jak se pohybovat v SearXNG pomocí klávesových zkratek"
+
+#: searx/webapp.py:334
+msgid "Control"
+msgstr "Ovládání"
+
+#: searx/webapp.py:335
+msgid "Results"
+msgstr "Výsledky"
+
+#: searx/webapp.py:336
+msgid "Navigation"
+msgstr "Navigace"
+
+#: searx/webapp.py:337
+msgid "Other"
+msgstr "Ostatní"
+
+#: searx/webapp.py:338
+msgid "remove focus from the focused input"
+msgstr "odebrat zaměření ze zaměřeného vstupu"
+
+#: searx/webapp.py:339
+msgid "copy url of the selected result to the clipboard"
+msgstr "zkopírovat adresu zvoleného výsledku do schránky"
+
+#: searx/webapp.py:340
+msgid "toggle help window"
+msgstr "přepnout okno nápovědy"
+
+#: searx/webapp.py:341
+msgid "focus on the search input"
+msgstr "zaměřit na vyhledávací pole"
+
+#: searx/webapp.py:342
+msgid "go to next page"
+msgstr "přejít na další stránku"
+
+#: searx/webapp.py:343
+msgid "open search result"
+msgstr "otevřít výsledek vyhledávání"
+
+#: searx/webapp.py:344
+msgid "go to previous page"
+msgstr "přejít na předchozí stránku"
+
+#: searx/webapp.py:345
+msgid "reload page from the server"
+msgstr "znovu načíst stránku ze serveru"
+
+#: searx/webapp.py:346
+msgid "open the result in a new tab"
+msgstr "otevřít výsledek v novém panelu"
+
+#: searx/webapp.py:347
+msgid "select previous search result"
+msgstr "zvolit předchozí výsledek vyhledávání"
+
+#: searx/webapp.py:348
+msgid "select next search result"
+msgstr "zvolit další výsledek vyhledávání"
+
+#: searx/webapp.py:349
+msgid "scroll one page up"
+msgstr "posunout o stránku nahoru"
+
+#: searx/webapp.py:350
+msgid "scroll half a page down"
+msgstr "posunout o půl stránky dolů"
+
+#: searx/webapp.py:351
+msgid "scroll one page down"
+msgstr "posunout o stránku dolů"
+
+#: searx/webapp.py:352
+msgid "scroll to the top of the page"
+msgstr "posunout na vršek stránky"
+
+#: searx/webapp.py:353
+msgid "scroll half a page up"
+msgstr "posunout o půl stránky nahoru"
+
+#: searx/webapp.py:354
+msgid "scroll to the bottom of the page"
+msgstr "posunout na spodek stránky"
+
+#: searx/webapp.py:502 searx/webapp.py:902
 msgid "Invalid settings, please edit your preferences"
 msgstr "Neplatné nastavení, upravte své předvolby"
 
-#: searx/webapp.py:492
+#: searx/webapp.py:518
 msgid "Invalid settings"
 msgstr "Neplatné nastavení"
 
-#: searx/webapp.py:569 searx/webapp.py:659
+#: searx/webapp.py:594 searx/webapp.py:684
 msgid "search error"
 msgstr "chyba vyhledávání"
 
@@ -600,35 +723,35 @@ msgstr "chyba SSL: ověření certifikátu selhalo"
 msgid "unexpected crash"
 msgstr "nečekaná chyba"
 
-#: searx/webutils.py:49
+#: searx/webutils.py:48
 msgid "HTTP error"
 msgstr "chyba HTTP"
 
-#: searx/webutils.py:50
+#: searx/webutils.py:49 searx/webutils.py:50
 msgid "HTTP connection error"
 msgstr "Chyba spojení HTTP"
 
-#: searx/webutils.py:56
+#: searx/webutils.py:54
 msgid "proxy error"
 msgstr "chyba proxy"
 
-#: searx/webutils.py:57
+#: searx/webutils.py:56
 msgid "CAPTCHA"
 msgstr "CAPTCHA"
 
-#: searx/webutils.py:58
+#: searx/webutils.py:57
 msgid "too many requests"
 msgstr "příliš mnoho požadavků"
 
-#: searx/webutils.py:59
+#: searx/webutils.py:58
 msgid "access denied"
 msgstr "přístup odepřen"
 
-#: searx/webutils.py:60
+#: searx/webutils.py:59
 msgid "server API error"
 msgstr "chyba API serveru"
 
-#: searx/webutils.py:79
+#: searx/webutils.py:78
 msgid "Suspended"
 msgstr "Pozastaveno"
 
@@ -642,7 +765,7 @@ msgstr "před {minutes} minutami"
 msgid "{hours} hour(s), {minutes} minute(s) ago"
 msgstr "před {hours} hodinami, {minutes} minutami"
 
-#: searx/answerers/random.py:69
+#: searx/answerers/random.py:68
 msgid "Generate different random values"
 msgstr "Generování náhodných hodnot"
 
@@ -651,7 +774,12 @@ msgstr "Generování náhodných hodnot"
 msgid "Compute {func} of the arguments"
 msgstr "Vypočítat {func} argumentů"
 
-#: searx/engines/openstreetmap.py:158
+#: searx/engines/boardreader.py:108
+#, python-brace-format
+msgid "Posted by {author}"
+msgstr "Autor: {author}"
+
+#: searx/engines/openstreetmap.py:156
 msgid "Show route in map .."
 msgstr "Zobrazit trasu na mapě .."
 
@@ -664,27 +792,23 @@ msgstr "{title} (ZASTARALÉ)"
 msgid "This entry has been superseded by"
 msgstr "Tato položka byla nahrazena položkou"
 
-#: searx/engines/qwant.py:293
+#: searx/engines/qwant.py:285
 msgid "Channel"
 msgstr "Kanál"
 
-#: searx/engines/radio_browser.py:153
+#: searx/engines/radio_browser.py:162
 msgid "bitrate"
 msgstr "datový tok"
 
-#: searx/engines/radio_browser.py:154
+#: searx/engines/radio_browser.py:163
 msgid "votes"
 msgstr "hlasy"
 
-#: searx/engines/radio_browser.py:155
+#: searx/engines/radio_browser.py:164
 msgid "clicks"
 msgstr "kliknutí"
 
-#: searx/engines/seekr.py:193 searx/engines/zlibrary.py:137
-msgid "Language"
-msgstr "Jazyk"
-
-#: searx/engines/semantic_scholar.py:102
+#: searx/engines/semantic_scholar.py:140
 #, python-brace-format
 msgid ""
 "{numCitations} citations from the year {firstCitationVelocityYear} to "
@@ -693,7 +817,7 @@ msgstr ""
 "{numCitations} citace z roku {firstCitationVelocityYear} do "
 "{lastCitationVelocityYear}"
 
-#: searx/engines/tineye.py:48
+#: searx/engines/tineye.py:42
 msgid ""
 "Could not read that image url. This may be due to an unsupported file "
 "format. TinEye only supports images that are JPEG, PNG, GIF, BMP, TIFF or"
@@ -703,7 +827,7 @@ msgstr ""
 "souboru. TinEye podporuje pouze obrázky ve formátu JPEG, PNG, GIF, BMP, "
 "TIFF nebo WebP."
 
-#: searx/engines/tineye.py:54
+#: searx/engines/tineye.py:48
 msgid ""
 "The image is too simple to find matches. TinEye requires a basic level of"
 " visual detail to successfully identify matches."
@@ -711,39 +835,43 @@ msgstr ""
 "Obrázek je příliš jednoduchý na to, aby bylo možné najít shody. TinEye "
 "vyžaduje základní úroveň vizuálních detailů pro úspěšnou identifikaci."
 
-#: searx/engines/tineye.py:59
+#: searx/engines/tineye.py:53
 msgid "The image could not be downloaded."
 msgstr "Obrázek se nepodařilo stáhnout."
 
-#: searx/engines/zlibrary.py:138
+#: searx/engines/zlibrary.py:79
+msgid "Language"
+msgstr "Jazyk"
+
+#: searx/engines/zlibrary.py:80
 msgid "Book rating"
 msgstr "Hodnocení knih"
 
-#: searx/engines/zlibrary.py:139
+#: searx/engines/zlibrary.py:81
 msgid "File quality"
 msgstr "Množství souborů"
 
-#: searx/plugins/ahmia_filter.py:32
+#: searx/plugins/ahmia_filter.py:33
 msgid "Ahmia blacklist"
 msgstr "Seznam blokování Ahmia"
 
-#: searx/plugins/ahmia_filter.py:33
+#: searx/plugins/ahmia_filter.py:34
 msgid "Filter out onion results that appear in Ahmia's blacklist."
 msgstr "Filtrovat výsledky onion, které se objeví na seznamu zakázaných Ahmia."
 
-#: searx/plugins/calculator.py:38
-msgid "Basic Calculator"
-msgstr "Základní kalkulačka"
+#: searx/plugins/calculator.py:25
+msgid "Calculator"
+msgstr "Kalkulačka"
 
-#: searx/plugins/calculator.py:39
-msgid "Calculate mathematical expressions via the search bar"
-msgstr "Vypočítejte matematické výrazy pomocí vyhledávací lišty"
+#: searx/plugins/calculator.py:26
+msgid "Parses and solves mathematical expressions."
+msgstr "Zpracovává a řeší matematické výrazy."
 
-#: searx/plugins/hash_plugin.py:34
+#: searx/plugins/hash_plugin.py:33
 msgid "Hash plugin"
 msgstr "Doplněk hashe"
 
-#: searx/plugins/hash_plugin.py:36
+#: searx/plugins/hash_plugin.py:35
 msgid ""
 "Converts strings to different hash digests. Available functions: md5, "
 "sha1, sha224, sha256, sha384, sha512."
@@ -751,25 +879,36 @@ msgstr ""
 "Převést řetězce na různé hash digesty. Dostupné funkce: md5, sha1, "
 "sha224, sha256, sha384, sha512."
 
-#: searx/plugins/hash_plugin.py:64
+#: searx/plugins/hash_plugin.py:63
 msgid "hash digest"
 msgstr "hash hodnota"
 
-#: searx/plugins/hostnames.py:123
+#: searx/plugins/hostnames.py:119
 msgid "Hostnames plugin"
 msgstr "Doplněk hostitelských jmen"
 
-#: searx/plugins/hostnames.py:124
+#: searx/plugins/hostnames.py:120
 msgid "Rewrite hostnames and remove or prioritize results based on the hostname"
 msgstr ""
 "Přepsat názvy hostitelů a odstranit nebo upřednostnit výsledky v "
 "závislosti na názvu hostitele"
+
+#: searx/plugins/infinite_scroll.py:25
+msgid "Infinite scroll"
+msgstr "Nekonečné výsledky"
+
+#: searx/plugins/infinite_scroll.py:26
+msgid ""
+"Automatically loads the next page when scrolling to bottom of the current"
+" page"
+msgstr "Automaticky načte další stránku při posunutí na konec aktuální stránky"
 
 #: searx/plugins/oa_doi_rewrite.py:55
 msgid "Open Access DOI rewrite"
 msgstr "Přesměrování na Open Access DOI"
 
 #: searx/plugins/oa_doi_rewrite.py:56
+#: searx/templates/simple/preferences/doi_resolver.html:15
 msgid ""
 "Avoid paywalls by redirecting to open-access versions of publications "
 "when available"
@@ -777,11 +916,11 @@ msgstr ""
 "Automaticky přesměrovat na volně přístupné verze publikací místo "
 "placených, pokud je to možné"
 
-#: searx/plugins/self_info.py:38
+#: searx/plugins/self_info.py:37
 msgid "Self Information"
 msgstr "Informace o sobě"
 
-#: searx/plugins/self_info.py:40
+#: searx/plugins/self_info.py:39
 msgid ""
 "Displays your IP if the query is \"ip\" and your user agent if the query "
 "is \"user-agent\"."
@@ -789,25 +928,25 @@ msgstr ""
 "Zobrazí vaší IP, pokud je dotaz „ip“ a váš uživatelský agent, pokud je "
 "dotaz „user-agent“."
 
-#: searx/plugins/self_info.py:54
+#: searx/plugins/self_info.py:53
 msgid "Your IP is: "
 msgstr "Vaše IP: "
 
-#: searx/plugins/self_info.py:58
+#: searx/plugins/self_info.py:57
 msgid "Your user-agent is: "
 msgstr "Váš uživatelský agent: "
 
-#: searx/plugins/time_zone.py:34
+#: searx/plugins/time_zone.py:33
 msgid "Timezones plugin"
-msgstr ""
+msgstr "Doplněk časových pásem"
 
-#: searx/plugins/time_zone.py:35
+#: searx/plugins/time_zone.py:34
 msgid "Display the current time on different time zones."
-msgstr ""
+msgstr "Zobrazit aktuální čas v různých časových pásmech."
 
 #: searx/plugins/tor_check.py:42
 msgid "Tor check plugin"
-msgstr "Doplněk kontroly TORu"
+msgstr "Doplněk kontroly Toru"
 
 #: searx/plugins/tor_check.py:44
 msgid ""
@@ -830,19 +969,19 @@ msgstr "Používáte Tor a zdá se, že máte externí IP adresu"
 msgid "You are not using Tor and you have the external IP address"
 msgstr "Nepoužíváte Tor a máte externí IP adresu"
 
-#: searx/plugins/tracker_url_remover.py:36
+#: searx/plugins/tracker_url_remover.py:35
 msgid "Tracker URL remover"
 msgstr "Odstranit sledovací URL"
 
-#: searx/plugins/tracker_url_remover.py:37
+#: searx/plugins/tracker_url_remover.py:36
 msgid "Remove trackers arguments from the returned URL"
 msgstr "Odstranit sledovací parametry z načtených URL"
 
-#: searx/plugins/unit_converter.py:49
+#: searx/plugins/unit_converter.py:43
 msgid "Unit converter plugin"
 msgstr "Doplněk převodu jednotek"
 
-#: searx/plugins/unit_converter.py:50
+#: searx/plugins/unit_converter.py:44
 msgid "Convert between units"
 msgstr "Převod mezi jednotkami"
 
@@ -864,92 +1003,71 @@ msgstr "Přejít na %(search_page)s."
 msgid "search page"
 msgstr "stránka vyhledávání"
 
-#: searx/templates/simple/base.html:50
+#: searx/templates/simple/base.html:54
 msgid "Donate"
 msgstr "Dar"
 
-#: searx/templates/simple/base.html:54
-#: searx/templates/simple/preferences.html:156
+#: searx/templates/simple/base.html:59 searx/templates/simple/base.html:61
+#: searx/templates/simple/preferences.html:152
 msgid "Preferences"
 msgstr "Nastavení"
 
-#: searx/templates/simple/base.html:64
+#: searx/templates/simple/base.html:72
 msgid "Powered by"
 msgstr "Poháněno softwarem"
 
-#: searx/templates/simple/base.html:64
+#: searx/templates/simple/base.html:72
 msgid "a privacy-respecting, open metasearch engine"
 msgstr "otevřený, metavyhledávající engine, respektující soukromí"
 
-#: searx/templates/simple/base.html:65
+#: searx/templates/simple/base.html:73
 #: searx/templates/simple/result_templates/packages.html:59
 msgid "Source code"
 msgstr "Zdrojový kód"
 
-#: searx/templates/simple/base.html:66
+#: searx/templates/simple/base.html:74
 msgid "Issue tracker"
 msgstr "Hlášení chyb"
 
-#: searx/templates/simple/base.html:67 searx/templates/simple/stats.html:18
+#: searx/templates/simple/base.html:75 searx/templates/simple/stats.html:17
 msgid "Engine stats"
 msgstr "Statistiky vyhledávače"
 
-#: searx/templates/simple/base.html:69
+#: searx/templates/simple/base.html:77
 msgid "Public instances"
 msgstr "Veřejné instance"
 
-#: searx/templates/simple/base.html:72
+#: searx/templates/simple/base.html:80
 msgid "Privacy policy"
 msgstr "Zásady soukromí"
 
-#: searx/templates/simple/base.html:75
+#: searx/templates/simple/base.html:83
 msgid "Contact instance maintainer"
 msgstr "Kontaktujte správce instance"
 
-#: searx/templates/simple/categories.html:30
+#: searx/templates/simple/categories.html:40
 msgid "Click on the magnifier to perform search"
 msgstr "Vyhledávání provedete kliknutím na lupu"
 
-#: searx/templates/simple/macros.html:40
+#: searx/templates/simple/macros.html:52
 msgid "Length"
 msgstr "Délka"
 
-#: searx/templates/simple/macros.html:41
+#: searx/templates/simple/macros.html:53
+#: searx/templates/simple/result_templates/paper.html:74
 msgid "Views"
 msgstr "Zhlédnutí"
 
-#: searx/templates/simple/macros.html:42
-#: searx/templates/simple/result_templates/files.html:34
-#: searx/templates/simple/result_templates/images.html:19
-#: searx/templates/simple/result_templates/paper.html:6
+#: searx/templates/simple/macros.html:54
+#: searx/templates/simple/result_templates/file.html:18
+#: searx/templates/simple/result_templates/images.html:52
+#: searx/templates/simple/result_templates/paper.html:14
 msgid "Author"
 msgstr "Autor"
 
-#: searx/templates/simple/macros.html:50
+#: searx/templates/simple/macros.html:63
 msgid "cached"
 msgstr "archivovaná verze"
-
-#: searx/templates/simple/new_issue.html:64
-msgid "Start submitting a new issue on GitHub"
-msgstr "Přidat nový problém na GitHub"
-
-#: searx/templates/simple/new_issue.html:66
-msgid "Please check for existing bugs about this engine on GitHub"
-msgstr "Zkontrolujte prosím existující chyby tohoto enginu na GitHubu"
-
-#: searx/templates/simple/new_issue.html:69
-msgid "I confirm there is no existing bug about the issue I encounter"
-msgstr ""
-"Potvrzuji, že neexistuje žádná chyba týkající se problému, se kterým se "
-"setkávám"
-
-#: searx/templates/simple/new_issue.html:71
-msgid "If this is a public instance, please specify the URL in the bug report"
-msgstr "Pokud je toto veřejná instance, uveďte prosím URL v náhlášení chyby"
-
-#: searx/templates/simple/new_issue.html:72
-msgid "Submit a new issue on Github including the above information"
-msgstr "Odeslat nový problém na GitHub včetně výše uvedených informací"
 
 #: searx/templates/simple/preferences.html:65
 msgid "No HTTPS"
@@ -970,77 +1088,86 @@ msgid "!bang for its categories"
 msgstr "!bang pro své kategorie"
 
 #: searx/templates/simple/preferences.html:102
-#: searx/templates/simple/stats.html:64
+#: searx/templates/simple/stats.html:63
 msgid "Median"
 msgstr "Medián"
 
 #: searx/templates/simple/preferences.html:103
-#: searx/templates/simple/stats.html:70
+#: searx/templates/simple/stats.html:69
 msgid "P80"
 msgstr "P80"
 
 #: searx/templates/simple/preferences.html:104
-#: searx/templates/simple/stats.html:76
+#: searx/templates/simple/stats.html:75
 msgid "P95"
 msgstr "P95"
 
-#: searx/templates/simple/preferences.html:136
-msgid "Failed checker test(s): "
-msgstr "Neúspešné testy zkoušečů: "
-
-#: searx/templates/simple/preferences.html:138
+#: searx/templates/simple/preferences.html:134
 msgid "Errors:"
 msgstr "Chyby:"
 
-#: searx/templates/simple/preferences.html:163
+#: searx/templates/simple/preferences.html:156
+msgid ""
+"This is a preview of the settings used by the 'Search URL' you used to "
+"get here."
+msgstr ""
+"Toto je náhled nastavení použitých „URL vyhledávání“, pomocí které jste "
+"se sem dostali."
+
+#: searx/templates/simple/preferences.html:158
+msgid "Press save to copy these preferences to your browser."
+msgstr "Stiskněte uložit pro zkopírování těchto předvoleb do vašeho prohlížeče."
+
+#: searx/templates/simple/preferences.html:159
+msgid "Click here to view your browser preferences instead:"
+msgstr "Kliknutím sem namísto toho zobrazíte předvolby z vašeho prohlížeče:"
+
+#: searx/templates/simple/preferences.html:169
 msgid "General"
 msgstr "Obecné"
 
-#: searx/templates/simple/preferences.html:166
+#: searx/templates/simple/preferences.html:172
 msgid "Default categories"
 msgstr "Základní kategorie"
 
-#: searx/templates/simple/preferences.html:194
+#: searx/templates/simple/preferences.html:200
 msgid "User interface"
 msgstr "Uživatelské rozhraní"
 
-#: searx/templates/simple/preferences.html:217
+#: searx/templates/simple/preferences.html:220
 msgid "Privacy"
 msgstr "Soukromí"
 
-#: searx/templates/simple/preferences.html:232
+#: searx/templates/simple/preferences.html:235
+#: searx/templates/simple/result_templates/images.html:63
 msgid "Engines"
 msgstr "Vyhledávače"
 
-#: searx/templates/simple/preferences.html:234
+#: searx/templates/simple/preferences.html:237
 msgid "Currently used search engines"
 msgstr "Aktuálně používané vyhledávače"
 
-#: searx/templates/simple/preferences.html:243
+#: searx/templates/simple/preferences.html:246
 msgid "Special Queries"
 msgstr "Zvláštní dotazy"
 
-#: searx/templates/simple/preferences.html:251
+#: searx/templates/simple/preferences.html:254
 msgid "Cookies"
 msgstr "Cookies"
 
-#: searx/templates/simple/results.html:30
-msgid "Number of results"
-msgstr "Počet výsledků"
-
-#: searx/templates/simple/results.html:36
+#: searx/templates/simple/results.html:32
 msgid "Info"
 msgstr "Informace"
 
-#: searx/templates/simple/results.html:77
+#: searx/templates/simple/results.html:73
 msgid "Back to top"
 msgstr "Nahoru"
 
-#: searx/templates/simple/results.html:95
+#: searx/templates/simple/results.html:91
 msgid "Previous page"
 msgstr "Předchozí stránka"
 
-#: searx/templates/simple/results.html:113
+#: searx/templates/simple/results.html:109
 msgid "Next page"
 msgstr "Další stránka"
 
@@ -1063,94 +1190,83 @@ msgstr "vyčistit"
 msgid "search"
 msgstr "vyhledat"
 
-#: searx/templates/simple/stats.html:21
+#: searx/templates/simple/stats.html:20
 msgid "There is currently no data available. "
 msgstr "Aktuálně nejsou k dispozici žádná data. "
 
 #: searx/templates/simple/preferences/engines.html:24
-#: searx/templates/simple/stats.html:25
+#: searx/templates/simple/stats.html:24
 msgid "Engine name"
 msgstr "Jméno vyhledávače"
 
-#: searx/templates/simple/stats.html:26
+#: searx/templates/simple/stats.html:25
 msgid "Scores"
 msgstr "Skóre"
 
-#: searx/templates/simple/stats.html:27
+#: searx/templates/simple/stats.html:26
 msgid "Result count"
 msgstr "Počet výsledků"
 
 #: searx/templates/simple/elements/engines_msg.html:7
-#: searx/templates/simple/preferences/engines.html:31
-#: searx/templates/simple/stats.html:28
+#: searx/templates/simple/preferences/engines.html:30
+#: searx/templates/simple/stats.html:27
 msgid "Response time"
 msgstr "Čas odpovědi"
 
-#: searx/templates/simple/preferences/engines.html:35
-#: searx/templates/simple/stats.html:29
+#: searx/templates/simple/preferences/engines.html:34
+#: searx/templates/simple/stats.html:28
 msgid "Reliability"
 msgstr "Spolehlivost"
 
-#: searx/templates/simple/stats.html:59
+#: searx/templates/simple/stats.html:58
 msgid "Total"
 msgstr "Celkem"
 
-#: searx/templates/simple/stats.html:60
+#: searx/templates/simple/stats.html:59
 msgid "HTTP"
 msgstr "HTTP"
 
-#: searx/templates/simple/stats.html:61
+#: searx/templates/simple/stats.html:60
 msgid "Processing"
 msgstr "Zpracovávám"
 
-#: searx/templates/simple/stats.html:99
+#: searx/templates/simple/stats.html:98
 msgid "Warnings"
 msgstr "Varování"
 
-#: searx/templates/simple/stats.html:99
+#: searx/templates/simple/stats.html:98
 msgid "Errors and exceptions"
 msgstr "Chyby a výjimky"
 
-#: searx/templates/simple/stats.html:105
+#: searx/templates/simple/stats.html:104
 msgid "Exception"
 msgstr "Výjimka"
 
-#: searx/templates/simple/stats.html:107
+#: searx/templates/simple/stats.html:106
 msgid "Message"
 msgstr "Zpráva"
 
-#: searx/templates/simple/stats.html:109
+#: searx/templates/simple/stats.html:108
 msgid "Percentage"
 msgstr "Procenta"
 
-#: searx/templates/simple/stats.html:111
+#: searx/templates/simple/stats.html:110
 msgid "Parameter"
 msgstr "Parametr"
 
-#: searx/templates/simple/result_templates/files.html:36
-#: searx/templates/simple/stats.html:119
+#: searx/templates/simple/result_templates/code.html:29
+#: searx/templates/simple/result_templates/file.html:24
+#: searx/templates/simple/stats.html:118
 msgid "Filename"
 msgstr "Název souboru"
 
-#: searx/templates/simple/stats.html:120
+#: searx/templates/simple/stats.html:119
 msgid "Function"
 msgstr "Funkce"
 
-#: searx/templates/simple/stats.html:121
+#: searx/templates/simple/stats.html:120
 msgid "Code"
 msgstr "Kód"
-
-#: searx/templates/simple/stats.html:128
-msgid "Checker"
-msgstr "Zkoušeč"
-
-#: searx/templates/simple/stats.html:131
-msgid "Failed test"
-msgstr "Test selhal"
-
-#: searx/templates/simple/stats.html:132
-msgid "Comment(s)"
-msgstr "Komentář(e)"
 
 #: searx/templates/simple/answer/translations.html:12
 #: searx/templates/simple/preferences/answerers.html:8
@@ -1226,7 +1342,7 @@ msgstr "Automatická detekce"
 #: searx/templates/simple/filters/safesearch.html:2
 #: searx/templates/simple/filters/safesearch.html:3
 #: searx/templates/simple/filters/safesearch.html:4
-#: searx/templates/simple/preferences/engines.html:27
+#: searx/templates/simple/preferences/engines.html:26
 #: searx/templates/simple/preferences/safesearch.html:2
 msgid "SafeSearch"
 msgstr "Bezpečné vyhledávání"
@@ -1247,7 +1363,7 @@ msgid "None"
 msgstr "Vypnuto"
 
 #: searx/templates/simple/filters/time_range.html:1
-#: searx/templates/simple/preferences/engines.html:28
+#: searx/templates/simple/preferences/engines.html:27
 msgid "Time range"
 msgstr "Časový interval"
 
@@ -1413,17 +1529,9 @@ msgstr "Pro obnovení vložte zkopírovaný hash předvoleb (bez adresy URL)"
 msgid "Preferences hash"
 msgstr "Hash předvoleb"
 
-#: searx/templates/simple/preferences/doi_resolver.html:1
-msgid "Digital Object Identifier (DOI)"
-msgstr "Digital Object Identifier (DOI)"
-
-#: searx/templates/simple/preferences/doi_resolver.html:6
-msgid "Open Access DOI resolver"
-msgstr "Web pro přesměrování na Open Access DOI"
-
-#: searx/templates/simple/preferences/doi_resolver.html:18
-msgid "Select service used by DOI rewrite"
-msgstr "Výběr služby použité při přepisu DOI"
+#: searx/templates/simple/preferences/doi_resolver.html:2
+msgid "DOI Resolver"
+msgstr "Resolver DOI"
 
 #: searx/templates/simple/preferences/engines.html:9
 msgid ""
@@ -1445,15 +1553,11 @@ msgstr "Zakázat vše"
 msgid "!bang"
 msgstr "!bang"
 
-#: searx/templates/simple/preferences/engines.html:26
-msgid "Supports selected language"
-msgstr "Podporuje vybraný jazyk"
-
-#: searx/templates/simple/preferences/engines.html:29
+#: searx/templates/simple/preferences/engines.html:28
 msgid "Weight"
 msgstr "Váha"
 
-#: searx/templates/simple/preferences/engines.html:33
+#: searx/templates/simple/preferences/engines.html:32
 msgid "Max time"
 msgstr "Max. čas"
 
@@ -1515,16 +1619,6 @@ msgstr "Nepřímé vyhledávání obrázků"
 #: searx/templates/simple/preferences/image_proxy.html:14
 msgid "Proxy image results through SearXNG"
 msgstr "Načítat výsledky hledání obrázků skrze proxy SearXNG"
-
-#: searx/templates/simple/preferences/infinite_scroll.html:2
-msgid "Infinite scroll"
-msgstr "Nekonečné výsledky"
-
-#: searx/templates/simple/preferences/infinite_scroll.html:14
-msgid ""
-"Automatically load the next page when scrolling to the bottom of the "
-"current page"
-msgstr "Automaticky načíst další stránku při posunu na konec aktuální stránky"
 
 #: searx/templates/simple/preferences/language.html:24
 msgid "What language do you prefer for search?"
@@ -1631,53 +1725,57 @@ msgid "Change result URL formatting"
 msgstr "Změnit formátování adres URL výsledků"
 
 #: searx/templates/simple/result_templates/code.html:13
-msgid "repo"
-msgstr "repozitář"
+msgid "Repository"
+msgstr "Organizace"
 
 #: searx/templates/simple/result_templates/default.html:6
-#: searx/templates/simple/result_templates/files.html:8
-#: searx/templates/simple/result_templates/files.html:11
+#: searx/templates/simple/result_templates/file.html:53
+#: searx/templates/simple/result_templates/file.html:56
 msgid "show media"
 msgstr "ukázat média"
 
 #: searx/templates/simple/result_templates/default.html:6
-#: searx/templates/simple/result_templates/files.html:8
+#: searx/templates/simple/result_templates/file.html:54
 msgid "hide media"
 msgstr "skrýt média"
 
 #: searx/templates/simple/result_templates/default.html:14
-#: searx/templates/simple/result_templates/videos.html:14
+#: searx/templates/simple/result_templates/videos.html:15
 msgid "This site did not provide any description."
 msgstr "Tato stránka nemá žádný popis."
 
-#: searx/templates/simple/result_templates/files.html:38
-#: searx/templates/simple/result_templates/images.html:22
+#: searx/templates/simple/result_templates/file.html:30
+#: searx/templates/simple/result_templates/images.html:61
 #: searx/templates/simple/result_templates/torrent.html:18
 msgid "Filesize"
 msgstr "Velikost"
 
-#: searx/templates/simple/result_templates/files.html:40
+#: searx/templates/simple/result_templates/file.html:36
 msgid "Date"
 msgstr "Datum"
 
-#: searx/templates/simple/result_templates/files.html:42
-#: searx/templates/simple/result_templates/paper.html:24
+#: searx/templates/simple/result_templates/file.html:42
+#: searx/templates/simple/result_templates/paper.html:44
 msgid "Type"
 msgstr "Typ"
 
-#: searx/templates/simple/result_templates/images.html:20
+#: searx/templates/simple/result_templates/file.html:67
+msgid "Download"
+msgstr "Stáhnout"
+
+#: searx/templates/simple/result_templates/images.html:53
 msgid "Resolution"
 msgstr "Rozlišení"
 
-#: searx/templates/simple/result_templates/images.html:21
-msgid "Format"
-msgstr "Formát"
+#: searx/templates/simple/result_templates/images.html:55
+msgid "Image formats"
+msgstr "Formáty obrázků"
 
-#: searx/templates/simple/result_templates/images.html:24
-msgid "Engine"
-msgstr "Vyhledávač"
+#: searx/templates/simple/result_templates/images.html:56
+msgid "original format"
+msgstr "původní formát"
 
-#: searx/templates/simple/result_templates/images.html:25
+#: searx/templates/simple/result_templates/images.html:64
 msgid "View source"
 msgstr "Zobrazit zdroj"
 
@@ -1706,7 +1804,7 @@ msgid "Updated at"
 msgstr "Aktualizováno"
 
 #: searx/templates/simple/result_templates/packages.html:30
-#: searx/templates/simple/result_templates/paper.html:25
+#: searx/templates/simple/result_templates/paper.html:50
 msgid "Tags"
 msgstr "Značky"
 
@@ -1726,39 +1824,39 @@ msgstr "Projekt"
 msgid "Project homepage"
 msgstr "Domovská stránka projektu"
 
-#: searx/templates/simple/result_templates/paper.html:5
+#: searx/templates/simple/result_templates/paper.html:8
 msgid "Published date"
 msgstr "Datum vydání"
 
-#: searx/templates/simple/result_templates/paper.html:9
+#: searx/templates/simple/result_templates/paper.html:20
 msgid "Journal"
 msgstr "Časopis"
 
-#: searx/templates/simple/result_templates/paper.html:22
+#: searx/templates/simple/result_templates/paper.html:32
 msgid "Editor"
 msgstr "Editor"
 
-#: searx/templates/simple/result_templates/paper.html:23
+#: searx/templates/simple/result_templates/paper.html:38
 msgid "Publisher"
 msgstr "Nakladatel"
 
-#: searx/templates/simple/result_templates/paper.html:26
+#: searx/templates/simple/result_templates/paper.html:56
 msgid "DOI"
 msgstr "DOI"
 
-#: searx/templates/simple/result_templates/paper.html:27
+#: searx/templates/simple/result_templates/paper.html:62
 msgid "ISSN"
 msgstr "ISSN"
 
-#: searx/templates/simple/result_templates/paper.html:28
+#: searx/templates/simple/result_templates/paper.html:68
 msgid "ISBN"
 msgstr "ISBN"
 
-#: searx/templates/simple/result_templates/paper.html:33
+#: searx/templates/simple/result_templates/paper.html:91
 msgid "PDF"
 msgstr "PDF"
 
-#: searx/templates/simple/result_templates/paper.html:34
+#: searx/templates/simple/result_templates/paper.html:92
 msgid "HTML"
 msgstr "HTML"
 
@@ -2371,3 +2469,68 @@ msgstr "skrýt video"
 #~ msgid "Change SearXNG layout"
 #~ msgstr "Změnit vzhled SearXNG"
 
+#~ msgid "repo"
+#~ msgstr "repozitář"
+
+#~ msgid "Basic Calculator"
+#~ msgstr "Základní kalkulačka"
+
+#~ msgid "Calculate mathematical expressions via the search bar"
+#~ msgstr "Vypočítejte matematické výrazy pomocí vyhledávací lišty"
+
+#~ msgid ""
+#~ "Automatically load the next page when"
+#~ " scrolling to the bottom of the "
+#~ "current page"
+#~ msgstr "Automaticky načíst další stránku při posunu na konec aktuální stránky"
+
+#~ msgid "Failed checker test(s): "
+#~ msgstr "Neúspešné testy zkoušečů: "
+
+#~ msgid "Checker"
+#~ msgstr "Zkoušeč"
+
+#~ msgid "Failed test"
+#~ msgstr "Test selhal"
+
+#~ msgid "Comment(s)"
+#~ msgstr "Komentář(e)"
+
+#~ msgid "Start submitting a new issue on GitHub"
+#~ msgstr "Přidat nový problém na GitHub"
+
+#~ msgid "Please check for existing bugs about this engine on GitHub"
+#~ msgstr "Zkontrolujte prosím existující chyby tohoto enginu na GitHubu"
+
+#~ msgid "I confirm there is no existing bug about the issue I encounter"
+#~ msgstr ""
+#~ "Potvrzuji, že neexistuje žádná chyba "
+#~ "týkající se problému, se kterým se "
+#~ "setkávám"
+
+#~ msgid "If this is a public instance, please specify the URL in the bug report"
+#~ msgstr "Pokud je toto veřejná instance, uveďte prosím URL v náhlášení chyby"
+
+#~ msgid "Submit a new issue on Github including the above information"
+#~ msgstr "Odeslat nový problém na GitHub včetně výše uvedených informací"
+
+#~ msgid "Supports selected language"
+#~ msgstr "Podporuje vybraný jazyk"
+
+#~ msgid "Number of results"
+#~ msgstr "Počet výsledků"
+
+#~ msgid "Format"
+#~ msgstr "Formát"
+
+#~ msgid "Engine"
+#~ msgstr "Vyhledávač"
+
+#~ msgid "Digital Object Identifier (DOI)"
+#~ msgstr "Digital Object Identifier (DOI)"
+
+#~ msgid "Open Access DOI resolver"
+#~ msgstr "Web pro přesměrování na Open Access DOI"
+
+#~ msgid "Select service used by DOI rewrite"
+#~ msgstr "Výběr služby použité při přepisu DOI"

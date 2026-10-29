@@ -3,8 +3,8 @@
 engine providing access to a variety of book resources (also via IPFS), created
 by a team of anonymous archivists (AnnaArchivist_).
 
-.. _Anna's Archive: https://annas-archive.org/
-.. _AnnaArchivist: https://annas-software.org/AnnaArchivist/annas-archive
+.. _Anna's Archive: https://annas-archive.gl/
+.. _AnnaArchivist: https://software.annas-archive.gl/AnnaArchivist/annas-archive
 
 Configuration
 =============
@@ -23,28 +23,36 @@ for *newest* articles and journals (PDF) / by shortcut ``!aaa <search-term>``.
 
   - name: annas articles
     engine: annas_archive
+    categories = ["general", "articles"]
     shortcut: aaa
-    aa_content: 'magazine'
-    aa_ext: 'pdf'
-    aa_sort: 'newest'
+    aa_content: "magazine"
+    aa_ext: "pdf"
+    aa_sort: "newest"
+
 
 Implementations
 ===============
 
 """
 
-from typing import List, Dict, Any, Optional
+import random
+import typing as t
 from urllib.parse import urlencode
-from lxml import html
 
-from searx.utils import extract_text, eval_xpath, eval_xpath_getindex, eval_xpath_list
-from searx.enginelib.traits import EngineTraits
+from lxml.etree import ElementBase
+
 from searx.data import ENGINE_TRAITS
-from searx.exceptions import SearxEngineXPathException
+from searx.enginelib.traits import EngineTraits
+from searx.result_types import EngineResults
+from searx.utils import eval_xpath, eval_xpath_getindex, eval_xpath_list, extract_text
+
+if t.TYPE_CHECKING:
+    from searx.extended_types import SXNG_Response
+    from searx.search.processors import OnlineParams
 
 # about
-about: Dict[str, Any] = {
-    "website": "https://annas-archive.org/",
+about: dict[str, t.Any] = {
+    "website": "https://annas-archive.gl/",
     "wikidata_id": "Q115288326",
     "official_api_documentation": None,
     "use_official_api": False,
@@ -53,11 +61,14 @@ about: Dict[str, Any] = {
 }
 
 # engine dependent config
-categories: List[str] = ["files"]
+categories = ["files", "books"]
 paging: bool = True
+language_support = True
 
 # search-url
-base_url: str = "https://annas-archive.org"
+base_url: list[str] | str = []
+"""List of Anna's archive domains or a single domain (as string)."""
+
 aa_content: str = ""
 """Anan's search form field **Content** / possible values::
 
@@ -66,14 +77,14 @@ aa_content: str = ""
 
 To not filter use an empty string (default).
 """
-aa_sort: str = ''
+aa_sort: str = ""
 """Sort Anna's results, possible values::
 
-    newest, oldest, largest, smallest
+    newest, oldest, largest, smallest, newest_added, oldest_added, random
 
 To sort by *most relevant* use an empty string (default)."""
 
-aa_ext: str = ''
+aa_ext: str = ""
 """Filter Anna's results by a file ending.  Common filters for example are
 ``pdf`` and ``epub``.
 
@@ -85,94 +96,174 @@ aa_ext: str = ''
 """
 
 
-def init(engine_settings=None):  # pylint: disable=unused-argument
+def setup(_engine_settings: dict[str, t.Any]) -> bool:
     """Check of engine's settings."""
-    traits = EngineTraits(**ENGINE_TRAITS['annas archive'])
 
-    if aa_content and aa_content not in traits.custom['content']:
-        raise ValueError(f'invalid setting content: {aa_content}')
+    traits: EngineTraits = EngineTraits(**ENGINE_TRAITS["annas archive"])
 
-    if aa_sort and aa_sort not in traits.custom['sort']:
-        raise ValueError(f'invalid setting sort: {aa_sort}')
+    if not base_url:
+        raise ValueError("missing required config `base_url`")
 
-    if aa_ext and aa_ext not in traits.custom['ext']:
-        raise ValueError(f'invalid setting ext: {aa_ext}')
+    if aa_content and aa_content not in traits.custom["content"]:
+        raise ValueError(f"invalid setting content: {aa_content}")
+
+    if aa_sort and aa_sort not in traits.custom["sort"]:
+        raise ValueError(f"invalid setting sort: {aa_sort}")
+
+    if aa_ext and aa_ext not in traits.custom["ext"]:
+        raise ValueError(f"invalid setting ext: {aa_ext}")
+
+    return True
 
 
-def request(query, params: Dict[str, Any]) -> Dict[str, Any]:
-    lang = traits.get_language(params["language"], traits.all_locale)  # type: ignore
+def _get_base_url_choice() -> str:
+    if isinstance(base_url, list):
+        return random.choice(base_url)
+
+    return base_url
+
+
+def request(query: str, params: "OnlineParams") -> None:
+    lang = traits.get_language(params["searxng_locale"], traits.all_locale)
     args = {
-        'lang': lang,
-        'content': aa_content,
-        'ext': aa_ext,
-        'sort': aa_sort,
-        'q': query,
-        'page': params['pageno'],
+        "lang": lang,
+        "content": aa_content,
+        "ext": aa_ext,
+        "sort": aa_sort,
+        "q": query,
+        "page": params["pageno"],
     }
-    # filter out None and empty values
+    # filter out empty values
     filtered_args = dict((k, v) for k, v in args.items() if v)
-    params["url"] = f"{base_url}/search?{urlencode(filtered_args)}"
-    return params
+
+    params["base_url"] = _get_base_url_choice()
+    params["url"] = f"{params['base_url']}/search?{urlencode(filtered_args)}"
 
 
-def response(resp) -> List[Dict[str, Optional[str]]]:
-    results: List[Dict[str, Optional[str]]] = []
-    dom = html.fromstring(resp.text)
+def response(resp: "SXNG_Response") -> EngineResults:
+    res = EngineResults()
+    dom = resp.html()
 
-    # The rendering of the WEB page is strange; positions of Anna's result page
-    # are enclosed in SGML comments.  These comments are *uncommented* by some
-    # JS code, see query of class '.js-scroll-hidden' in Anna's HTML template:
-    #   https://annas-software.org/AnnaArchivist/annas-archive/-/blob/main/allthethings/templates/macros/md5_list.html
+    # Each result is a div with class "flex" inside "js-aarecord-list-outer"
+    # container.  The "flex" filter excludes non-result div such as section
+    # separators.
+    for item in eval_xpath_list(
+        dom,
+        "//main//div[contains(@class, 'js-aarecord-list-outer')]/div[contains(@class, 'flex')]",
+    ):
+        result = _get_result(item, resp.search_params["base_url"])
+        if result is not None:
+            res.add(res.types.Paper(**result))
 
-    for item in eval_xpath_list(dom, '//main//div[contains(@class, "js-aarecord-list-outer")]/div'):
-        try:
-            results.append(_get_result(item))
-        except SearxEngineXPathException:
-            pass
-    return results
+    return res
 
 
-def _get_result(item):
-    return {
-        'template': 'paper.html',
-        'url': base_url + extract_text(eval_xpath_getindex(item, './a/@href', 0)),
-        'title': extract_text(eval_xpath(item, './div//a[starts-with(@href, "/md5")]')),
-        'authors': [extract_text(eval_xpath_getindex(item, './/a[starts-with(@href, "/search")]', 0))],
-        'publisher': extract_text(
-            eval_xpath_getindex(item, './/a[starts-with(@href, "/search")]', 1, default=None), allow_none=True
-        ),
-        'content': extract_text(eval_xpath(item, './/div[contains(@class, "relative")]')),
-        'thumbnail': extract_text(eval_xpath_getindex(item, './/img/@src', 0, default=None), allow_none=True),
+def _get_result(item: ElementBase, base_url_choice: str) -> dict[str, t.Any] | None:
+    # the first direct child "a" contains the link to the result page
+    href_els = item.xpath("./a/@href")
+    if not href_els:
+        return None
+
+    # the link with class "js-vim-focus" is always the title link
+    title_text = extract_text(
+        xpath_results=eval_xpath(item, ".//a[contains(@class, 'js-vim-focus')]"),
+        allow_none=True,
+    )
+    if not title_text:
+        return None
+
+    result: dict[str, t.Any] = {
+        "url": base_url_choice + href_els[0],
+        "title": title_text,
     }
 
+    result["content"] = extract_text(
+        xpath_results=eval_xpath_getindex(
+            element=item,
+            # the content is in a div with class "relative" and "line-clamp"
+            xpath_spec=".//div[@class='relative']/div[contains(@class, 'line-clamp')]",
+            index=0,
+            default=None,
+        ),
+        allow_none=True,
+    )
 
-def fetch_traits(engine_traits: EngineTraits):
+    result["thumbnail"] = eval_xpath_getindex(
+        element=item,
+        # the thumbnail is the src of the first img in the result item
+        xpath_spec=".//img/@src",
+        index=0,
+        default=None,
+    )
+
+    result["authors"] = [
+        extract_text(
+            xpath_results=eval_xpath_getindex(
+                element=item,
+                # identified by the "user-edit" icon
+                xpath_spec=".//a[.//span[contains(@class, 'icon-[mdi--user-edit]')]]",
+                index=0,
+                default=None,
+            ),
+            allow_none=True,
+        )
+    ]
+
+    result["publisher"] = extract_text(
+        xpath_results=eval_xpath_getindex(
+            element=item,
+            # identified by the "company" icon
+            xpath_spec=".//a[.//span[contains(@class, 'icon-[mdi--company]')]]",
+            index=0,
+            default=None,
+        ),
+        allow_none=True,
+    )
+
+    tags_text = extract_text(
+        xpath_results=eval_xpath_getindex(
+            element=item,
+            # the only one with "font-semibold" class
+            xpath_spec=".//div[contains(@class, 'font-semibold')]",
+            index=0,
+            default=None,
+        ),
+        allow_none=True,
+    )
+    if tags_text:
+        result["tags"] = [tag.strip() for tag in tags_text.split("Save")[0].split("·") if tag.strip()]
+
+    return result
+
+
+def fetch_traits(engine_traits: EngineTraits) -> None:
     """Fetch languages and other search arguments from Anna's search form."""
     # pylint: disable=import-outside-toplevel
 
     import babel
-    from searx.network import get  # see https://github.com/searxng/searxng/issues/762
+
     from searx.locales import language_tag
+    from searx.network import get  # see https://github.com/searxng/searxng/issues/762
 
-    engine_traits.all_locale = ''
-    engine_traits.custom['content'] = []
-    engine_traits.custom['ext'] = []
-    engine_traits.custom['sort'] = []
+    engine_traits.all_locale = ""
+    engine_traits.custom["content"] = []
+    engine_traits.custom["ext"] = []
+    engine_traits.custom["sort"] = []
 
-    resp = get(base_url + '/search')
-    if not resp.ok:  # type: ignore
-        raise RuntimeError("Response from Anna's search page is not OK.")
-    dom = html.fromstring(resp.text)  # type: ignore
+    resp = get(_get_base_url_choice() + "/search", timeout=5)
+    if not resp.ok:
+        raise RuntimeError("Response from Anna's Archive is not OK.")
+
+    dom = resp.html()
 
     # supported language codes
-
-    lang_map = {}
+    lang_map: dict[str, str] = {}
     for x in eval_xpath_list(dom, "//form//input[@name='lang']"):
         eng_lang = x.get("value")
-        if eng_lang in ('', '_empty', 'nl-BE', 'und') or eng_lang.startswith('anti__'):
+        if eng_lang in ("", "_empty", "nl-BE", "und") or eng_lang.startswith("anti__"):
             continue
         try:
-            locale = babel.Locale.parse(lang_map.get(eng_lang, eng_lang), sep='-')
+            locale = babel.Locale.parse(lang_map.get(eng_lang, eng_lang), sep="-")
         except babel.UnknownLocaleError:
             # silently ignore unknown languages
             # print("ERROR: %s -> %s is unknown by babel" % (x.get("data-name"), eng_lang))
@@ -187,16 +278,16 @@ def fetch_traits(engine_traits: EngineTraits):
 
     for x in eval_xpath_list(dom, "//form//input[@name='content']"):
         if not x.get("value").startswith("anti__"):
-            engine_traits.custom['content'].append(x.get("value"))
+            engine_traits.custom["content"].append(x.get("value"))
 
     for x in eval_xpath_list(dom, "//form//input[@name='ext']"):
         if not x.get("value").startswith("anti__"):
-            engine_traits.custom['ext'].append(x.get("value"))
+            engine_traits.custom["ext"].append(x.get("value"))
 
     for x in eval_xpath_list(dom, "//form//select[@name='sort']//option"):
-        engine_traits.custom['sort'].append(x.get("value"))
+        engine_traits.custom["sort"].append(x.get("value"))
 
     # for better diff; sort the persistence of these traits
-    engine_traits.custom['content'].sort()
-    engine_traits.custom['ext'].sort()
-    engine_traits.custom['sort'].sort()
+    engine_traits.custom["content"].sort()
+    engine_traits.custom["ext"].sort()
+    engine_traits.custom["sort"].sort()

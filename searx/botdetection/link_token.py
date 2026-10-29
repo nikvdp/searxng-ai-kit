@@ -34,7 +34,7 @@ And in the HTML template from flask a stylesheet link is needed (the value of
    https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
 
 """
-from __future__ import annotations
+
 from ipaddress import (
     IPv4Network,
     IPv6Network,
@@ -151,6 +151,6 @@ def get_token() -> str:
     if token:
         token = token.decode('UTF-8')  # type: ignore
     else:
-        token = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(16))
+        token = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
         valkey_client.set(TOKEN_KEY, token, ex=TOKEN_LIVE_TIME)
     return token

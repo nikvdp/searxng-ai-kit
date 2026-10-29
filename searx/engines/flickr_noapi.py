@@ -1,20 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Flickr (Images)
-
-"""
-
-from typing import TYPE_CHECKING
+"""Flickr (Images)"""
 
 import json
 from time import time
 import re
 from urllib.parse import urlencode
 from searx.utils import ecma_unescape, html_to_text
-
-if TYPE_CHECKING:
-    import logging
-
-    logger: logging.Logger
 
 # about
 about = {

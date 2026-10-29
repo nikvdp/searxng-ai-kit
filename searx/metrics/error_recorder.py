@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # pylint: disable=missing-module-docstring, invalid-name
 
-import typing
+import typing as t
+
 import inspect
 from json import JSONDecodeError
 from urllib.parse import urlparse
-from httpx import HTTPError, HTTPStatusError
+from curl_cffi.requests.exceptions import HTTPError, RequestException
 from searx.exceptions import (
     SearxXPathSyntaxException,
     SearxEngineXPathException,
@@ -15,34 +16,32 @@ from searx.exceptions import (
 from searx import searx_parent_dir, settings
 from searx.engines import engines
 
+errors_per_engines: dict[str, t.Any] = {}
 
-errors_per_engines = {}
+LogParametersType = tuple[str, ...]
 
 
 class ErrorContext:  # pylint: disable=missing-class-docstring
 
-    __slots__ = (
-        'filename',
-        'function',
-        'line_no',
-        'code',
-        'exception_classname',
-        'log_message',
-        'log_parameters',
-        'secondary',
-    )
-
     def __init__(  # pylint: disable=too-many-arguments
-        self, filename, function, line_no, code, exception_classname, log_message, log_parameters, secondary
+        self,
+        filename: str,
+        function: str,
+        line_no: int,
+        code: str,
+        exception_classname: str,
+        log_message: str,
+        log_parameters: LogParametersType,
+        secondary: bool,
     ):
-        self.filename = filename
-        self.function = function
-        self.line_no = line_no
-        self.code = code
-        self.exception_classname = exception_classname
-        self.log_message = log_message
-        self.log_parameters = log_parameters
-        self.secondary = secondary
+        self.filename: str = filename
+        self.function: str = function
+        self.line_no: int = line_no
+        self.code: str = code
+        self.exception_classname: str = exception_classname
+        self.log_message: str = log_message
+        self.log_parameters: LogParametersType = log_parameters
+        self.secondary: bool = secondary
 
     def __eq__(self, o) -> bool:  # pylint: disable=invalid-name
         if not isinstance(o, ErrorContext):
@@ -92,7 +91,7 @@ def add_error_context(engine_name: str, error_context: ErrorContext) -> None:
 
 def get_trace(traces):
     for trace in reversed(traces):
-        split_filename = trace.filename.split('/')
+        split_filename: list[str] = trace.filename.split('/')
         if '/'.join(split_filename[-3:-1]) == 'searx/engines':
             return trace
         if '/'.join(split_filename[-4:-1]) == 'searx/search/processors':
@@ -100,42 +99,32 @@ def get_trace(traces):
     return traces[-1]
 
 
-def get_hostname(exc: HTTPError) -> typing.Optional[None]:
-    url = exc.request.url
-    if url is None and exc.response is not None:
-        url = exc.response.url
-    return urlparse(url).netloc
+def get_hostname(exc: RequestException) -> str | None:
+    url = getattr(getattr(exc, "request", None), "url", None)
+    if url is None:
+        url = getattr(getattr(exc, "response", None), "url", None)
+    return urlparse(str(url)).netloc if url else None
 
 
 def get_request_exception_messages(
-    exc: HTTPError,
-) -> typing.Tuple[typing.Optional[str], typing.Optional[str], typing.Optional[str]]:
-    url = None
-    status_code = None
-    reason = None
-    hostname = None
-    if hasattr(exc, '_request') and exc._request is not None:  # pylint: disable=protected-access
-        # exc.request is property that raise an RuntimeException
-        # if exc._request is not defined.
-        url = exc.request.url
-    if url is None and hasattr(exc, 'response') and exc.response is not None:
-        url = exc.response.url
-    if url is not None:
-        hostname = url.host
-    if isinstance(exc, HTTPStatusError):
-        status_code = str(exc.response.status_code)
-        reason = exc.response.reason_phrase
-    return (status_code, reason, hostname)
+    exc: RequestException,
+) -> tuple[str | None, str | None, str | None]:
+    response = getattr(exc, "response", None)
+    status_code = reason = None
+    if isinstance(exc, HTTPError) and response is not None:
+        status_code = str(response.status_code)
+        reason = response.reason
+    return (status_code, reason, get_hostname(exc))
 
 
-def get_messages(exc, filename) -> typing.Tuple:  # pylint: disable=too-many-return-statements
+def get_messages(exc, filename) -> tuple[str, ...]:  # pylint: disable=too-many-return-statements
     if isinstance(exc, JSONDecodeError):
         return (exc.msg,)
     if isinstance(exc, TypeError):
         return (str(exc),)
     if isinstance(exc, ValueError) and 'lxml' in filename:
         return (str(exc),)
-    if isinstance(exc, HTTPError):
+    if isinstance(exc, RequestException):
         return get_request_exception_messages(exc)
     if isinstance(exc, SearxXPathSyntaxException):
         return (exc.xpath_str, exc.message)
@@ -148,7 +137,7 @@ def get_messages(exc, filename) -> typing.Tuple:  # pylint: disable=too-many-ret
     return ()
 
 
-def get_exception_classname(exc: Exception) -> str:
+def get_exception_classname(exc: BaseException) -> str:
     exc_class = exc.__class__
     exc_name = exc_class.__qualname__
     exc_module = exc_class.__module__
@@ -157,7 +146,9 @@ def get_exception_classname(exc: Exception) -> str:
     return exc_module + '.' + exc_name
 
 
-def get_error_context(framerecords, exception_classname, log_message, log_parameters, secondary) -> ErrorContext:
+def get_error_context(
+    framerecords, exception_classname, log_message, log_parameters: LogParametersType, secondary: bool
+) -> ErrorContext:
     searx_frame = get_trace(framerecords)
     filename = searx_frame.filename
     if filename.startswith(searx_parent_dir):
@@ -169,7 +160,7 @@ def get_error_context(framerecords, exception_classname, log_message, log_parame
     return ErrorContext(filename, function, line_no, code, exception_classname, log_message, log_parameters, secondary)
 
 
-def count_exception(engine_name: str, exc: Exception, secondary: bool = False) -> None:
+def count_exception(engine_name: str, exc: BaseException, secondary: bool = False) -> None:
     if not settings['general']['enable_metrics']:
         return
     framerecords = inspect.trace()
@@ -183,7 +174,10 @@ def count_exception(engine_name: str, exc: Exception, secondary: bool = False) -
 
 
 def count_error(
-    engine_name: str, log_message: str, log_parameters: typing.Optional[typing.Tuple] = None, secondary: bool = False
+    engine_name: str,
+    log_message: str,
+    log_parameters: LogParametersType | None = None,
+    secondary: bool = False,
 ) -> None:
     if not settings['general']['enable_metrics']:
         return

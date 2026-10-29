@@ -2280,6 +2280,7 @@ def search(
 
         # Perform search
         result_container = CLISearch(search_query).search()
+        results = make_json_safe(result_container.get_ordered_results())
 
         # Prepare results
         results_dict = {
@@ -2291,11 +2292,11 @@ def search(
                 "timerange": search_query.time_range,
                 "category": category,
             },
-            "results": make_json_safe(result_container.get_ordered_results()),
+            "results": results,
             "infoboxes": make_json_safe(result_container.infoboxes),
             "suggestions": make_json_safe(list(result_container.suggestions)),
             "answers": make_json_safe(list(result_container.answers)),
-            "number_of_results": result_container.number_of_results,
+            "number_of_results": len(results),
         }
 
         # Output results
@@ -2559,7 +2560,8 @@ async def perform_search_async(
         result_container = CLISearch(search_query).search()
 
         # Get results
-        results = make_json_safe(result_container.get_ordered_results()[:max_results])
+        ordered_results = result_container.get_ordered_results()
+        results = make_json_safe(ordered_results[:max_results])
 
         # Clean up results for JSON serialization
         clean_results = []
@@ -2581,7 +2583,7 @@ async def perform_search_async(
             "engines_used": [ref.name for ref in search_query.engineref_list],
             "results": clean_results,
             "suggestions": make_json_safe(list(result_container.suggestions)),
-            "number_of_results": result_container.number_of_results,
+            "number_of_results": len(ordered_results),
         }
 
     except Exception as e:

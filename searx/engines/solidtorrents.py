@@ -1,13 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""SolidTorrents
-
-"""
+"""SolidTorrents"""
 
 from datetime import datetime
 from urllib.parse import urlencode
 import random
-
-from lxml import html
 
 from searx.utils import (
     extract_text,
@@ -45,7 +41,7 @@ def request(query, params):
 
 def response(resp):
     results = []
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
 
     for result in eval_xpath(dom, '//li[contains(@class, "search-result")]'):
         torrentfile = eval_xpath_getindex(result, './/a[contains(@class, "dl-torrent")]/@href', 0, None)

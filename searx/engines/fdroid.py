@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- F-Droid (a repository of FOSS applications for Android)
+F-Droid (a repository of FOSS applications for Android)
 """
 
 from urllib.parse import urlencode
-from lxml import html
 from searx.utils import extract_text
 
 # about
@@ -18,7 +17,7 @@ about = {
 }
 
 # engine dependent config
-categories = ['files', 'apps']
+categories = ['it', 'apps']
 paging = True
 
 # search-url
@@ -37,7 +36,7 @@ def request(query, params):
 def response(resp):
     results = []
 
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
 
     for app in dom.xpath('//a[@class="package-header"]'):
         app_url = app.xpath('./@href')[0]

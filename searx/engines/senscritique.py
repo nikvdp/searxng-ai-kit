@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""SensCritique (movies)
-"""
-from __future__ import annotations
+"""SensCritique (movies)"""
+
+import typing as t
 
 from json import dumps, loads
-from typing import Any, Optional
 from searx.result_types import EngineResults, MainResult
 
 about = {
@@ -14,8 +13,8 @@ about = {
     "use_official_api": False,
     "require_api_key": False,
     "results": 'JSON',
-    'language': 'fr',
 }
+language = "fr"
 
 categories = ['movies']
 paging = True
@@ -61,7 +60,7 @@ graphql_query = """query SearchProductExplorer($query: String, $offset: Int, $li
 }"""
 
 
-def request(query: str, params: dict[str, Any]) -> dict[str, Any]:
+def request(query: str, params: dict[str, t.Any]) -> dict[str, t.Any]:
     offset = (params['pageno'] - 1) * page_size
 
     data = {
@@ -95,7 +94,7 @@ def response(resp) -> EngineResults:
     return res
 
 
-def parse_item(item: dict[str, Any]) -> MainResult | None:
+def parse_item(item: dict[str, t.Any]) -> MainResult | None:
     """Parse a single item from the SensCritique API response"""
     title = item.get('title', '')
     if not title:
@@ -118,7 +117,7 @@ def parse_item(item: dict[str, Any]) -> MainResult | None:
     )
 
 
-def build_content_parts(item: dict[str, Any], title: str, original_title: Optional[str]) -> list[str]:
+def build_content_parts(item: dict[str, t.Any], title: str, original_title: str | None) -> list[str]:
     """Build the content parts for an item"""
     content_parts = []
 

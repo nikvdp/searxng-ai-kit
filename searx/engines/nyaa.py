@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Nyaa.si (Anime Bittorrent tracker)
-
-"""
+"""Nyaa.si (Anime Bittorrent tracker)"""
 
 from urllib.parse import urlencode
 
-from lxml import html
 from searx.utils import (
     eval_xpath_getindex,
     extract_text,
@@ -57,7 +54,7 @@ def request(query, params):
 def response(resp):
     results = []
 
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
 
     for result in dom.xpath(xpath_results):
         # defaults

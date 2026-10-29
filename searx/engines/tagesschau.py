@@ -15,16 +15,12 @@ This SearXNG engine uses the `/api2u/search`_ API.
 .. _OpenAPI: https://swagger.io/specification/
 
 """
-from typing import TYPE_CHECKING
 
 from datetime import datetime
 from urllib.parse import urlencode
 import re
 
-if TYPE_CHECKING:
-    import logging
-
-    logger: logging.Logger
+from searx.result_types import Video
 
 about = {
     'website': "https://tagesschau.de",
@@ -33,9 +29,10 @@ about = {
     'use_official_api': True,
     'require_api_key': False,
     'results': 'JSON',
-    'language': 'de',
 }
-categories = ['general', 'news']
+language = "de"
+
+categories = ['news']
 paging = True
 
 results_per_page = 10
@@ -86,13 +83,13 @@ def _story(item):
     return {
         'title': item['title'],
         'thumbnail': item.get('teaserImage', {}).get('imageVariants', {}).get('16x9-256'),
-        'publishedDate': datetime.strptime(item['date'][:19], '%Y-%m-%dT%H:%M:%S'),
-        'content': item['firstSentence'],
+        'publishedDate': datetime.fromisoformat(item['date'][:19]),
+        'content': item.get('firstSentence'),
         'url': item['shareURL'] if use_source_url else item['detailsweb'],
     }
 
 
-def _video(item):
+def _video(item) -> Video:
     streams = item['streams']
     video_url = streams.get('h264s') or streams.get('h264m') or streams.get('h264l') or streams.get('h264xl')
     title = item['title']
@@ -104,12 +101,11 @@ def _video(item):
     # sometimes, only adaptive m3u8 streams are available, so video_url is None
     url = video_url or f"{base_url}/multimedia/video/{item['sophoraId']}.html"
 
-    return {
-        'template': 'videos.html',
-        'title': title,
-        'thumbnail': item.get('teaserImage', {}).get('imageVariants', {}).get('16x9-256'),
-        'publishedDate': datetime.strptime(item['date'][:19], '%Y-%m-%dT%H:%M:%S'),
-        'content': item.get('firstSentence', ''),
-        'iframe_src': video_url,
-        'url': url,
-    }
+    return Video(
+        title=title,
+        thumbnail=item.get('teaserImage', {}).get('imageVariants', {}).get('16x9-256'),
+        publishedDate=datetime.fromisoformat(item['date'][:19]),
+        content=item.get('firstSentence', ''),
+        iframe_src=video_url,
+        url=url,
+    )

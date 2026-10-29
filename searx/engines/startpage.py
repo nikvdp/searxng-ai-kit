@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Startpage's language & region selectors are a mess ..
+"""Startpage requires solving an Anubis POW captcha (difficulty 4).
+Solving it requires a lot of CPU, so the engine is set inactive by default.
+
+Startpage's language & region selectors are a mess ..
 
 .. _startpage regions:
 
@@ -49,10 +52,15 @@ W3C recommends subtag over macrolanguage [2]_.
 Startpage languages
 ===================
 
-:py:obj:`send_accept_language_header`:
+HTTP ``Accept-Language`` header (``send_accept_language_header``):
   The displayed name in Startpage's settings page depend on the location of the
-  IP when ``Accept-Language`` HTTP header is unset.  In :py:obj:`fetch_traits`
-  we use::
+  IP when ``Accept-Language`` HTTP header is unset.
+
+  Startpage tries to guess user's language and territory from the HTTP
+  ``Accept-Language``.  Optional the user can select a search-language (can be
+  different to the UI language) and a region filter.
+
+  In :py:obj:`fetch_traits` we use::
 
     'Accept-Language': "en-US,en;q=0.5",
     ..
@@ -77,69 +85,65 @@ Startpage's category (for Web-search, News, Videos, ..) is set by
   Supported categories are ``web``, ``news`` and ``images``.
 
 """
-# pylint: disable=too-many-statements
-from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-from collections import OrderedDict
+# pylint: disable=too-many-statements
+
+import hashlib
 import re
-from unicodedata import normalize, combining
+import typing as t
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from json import loads
+from unicodedata import combining, normalize
 
-import dateutil.parser
-import lxml.html
 import babel.localedata
+import dateutil.parser
 
-from searx.utils import extr, extract_text, eval_xpath, gen_useragent, html_to_text, humanize_bytes, remove_pua_from_str
-from searx.network import get  # see https://github.com/searxng/searxng/issues/762
+from searx.enginelib import EngineCache
+from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxEngineCaptchaException
 from searx.locales import region_tag
-from searx.enginelib.traits import EngineTraits
-from searx.enginelib import EngineCache
-
-if TYPE_CHECKING:
-    import logging
-
-    logger: logging.Logger
-
-traits: EngineTraits
+from searx.network import get, post  # see https://github.com/searxng/searxng/issues/762
+from searx.utils import (
+    eval_xpath,
+    extr,
+    extract_text,
+    gen_useragent,
+    html_to_text,
+    humanize_bytes,
+    remove_pua_from_str,
+)
 
 # about
 about = {
-    "website": 'https://startpage.com',
-    "wikidata_id": 'Q2333295',
+    "website": "https://startpage.com",
+    "wikidata_id": "Q2333295",
     "official_api_documentation": None,
     "use_official_api": False,
     "require_api_key": False,
-    "results": 'HTML',
+    "results": "HTML",
 }
 
-startpage_categ = 'web'
+startpage_categ = "web"
 """Startpage's category, visit :ref:`startpage categories`.
 """
 
-send_accept_language_header = True
-"""Startpage tries to guess user's language and territory from the HTTP
-``Accept-Language``.  Optional the user can select a search-language (can be
-different to the UI language) and a region filter.
-"""
-
 # engine dependent config
-categories = ['general', 'web']
+categories = ["general", "web"]
 paging = True
 max_page = 18
 """Tested 18 pages maximum (argument ``page``), to be save max is set to 20."""
 
 time_range_support = True
+language_support = True
 safesearch = True
 
-time_range_dict = {'day': 'd', 'week': 'w', 'month': 'm', 'year': 'y'}
-safesearch_dict = {0: '0', 1: '1', 2: '1'}
+time_range_dict = {"day": "d", "week": "w", "month": "m", "year": "y"}
+safesearch_dict = {0: "none", 1: "moderate", 2: "heavy"}
 
 # search-url
-base_url = 'https://www.startpage.com'
-search_url = base_url + '/sp/search'
+base_url = "https://www.startpage.com"
+search_url = base_url + "/sp/search"
 
 # specific xpath variables
 # ads xpath //div[@id="results"]/div[@id="sponsored"]//div[@class="result"]
@@ -165,19 +169,58 @@ CACHE: EngineCache
 seconds."""
 
 
-def init(_):
+def setup(_: dict[str, t.Any]) -> bool | None:
     global CACHE  # pylint: disable=global-statement
 
     # hint: all three startpage engines (WEB, Images & News) can/should use the
     # same sc_code ..
-    CACHE = EngineCache("startpage")  # type:ignore
+    CACHE = EngineCache("startpage")
 
 
 sc_code_cache_sec = 3600
 """Time in seconds the sc-code is cached in memory :py:obj:`get_sc_code`."""
 
+# startpage's anubis difficulty is set to 4
+max_difficulty = 4
 
-def get_sc_code(searxng_locale, params):
+
+def _solve_anubis(resp) -> str:
+    """Anubis POW solver"""
+    payload = loads(extr(resp.text, '<script id="anubis_challenge" type="application/json">', "</script>"))
+    challenge = payload["challenge"]
+    difficulty = int(payload["rules"]["difficulty"])
+    if difficulty > max_difficulty:
+        raise SearxEngineCaptchaException(message="startpage: Anubis difficulty too high")
+    prefix = "0" * difficulty
+    blob = challenge["randomData"].encode()
+    for nonce in range(16**difficulty * 8):  # max search is 8x average search, e^-8 = 0.034% will fail
+        digest = hashlib.sha256(blob + str(nonce).encode()).hexdigest()
+        if digest.startswith(prefix):
+            break
+    else:
+        raise SearxEngineCaptchaException(message="startpage: Anubis failed")
+
+    pass_resp = get(
+        f"{base_url}/.within.website/x/cmd/anubis/api/pass-challenge",
+        params={
+            "id": challenge["id"],
+            "response": digest,
+            "nonce": nonce,
+            "redir": str(resp.url),
+            "elapsedTime": "1",
+        },
+        cookies=resp.cookies,
+        allow_redirects=False,
+    )
+    auth = pass_resp.cookies.get("spchal-auth")
+    if not auth:
+        raise SearxEngineCaptchaException(message="startpage: Anubis pass-challenge failed")
+    auth = str(auth)
+    CACHE.set("SPCHAL_AUTH", auth, expire=240)
+    return auth
+
+
+def get_sc_code(params):
     """Get an actual ``sc`` argument from Startpage's search form (HTML page).
 
     Startpage puts a ``sc`` argument on every HTML :py:obj:`search form
@@ -190,50 +233,37 @@ def get_sc_code(searxng_locale, params):
     :py:obj:`sc_code_cache_sec` seconds."""
 
     sc_code = CACHE.get("SC_CODE")
-
     if sc_code:
         logger.debug("get_sc_code: using cached value: %s", sc_code)
         return sc_code
 
-    headers = {**params['headers']}
-
-    # add Accept-Language header
-    if searxng_locale == 'all':
-        searxng_locale = 'en-US'
-    locale = babel.Locale.parse(searxng_locale, sep='-')
-
-    if send_accept_language_header:
-        ac_lang = locale.language
-        if locale.territory:
-            ac_lang = "%s-%s,%s;q=0.9,*;q=0.5" % (
-                locale.language,
-                locale.territory,
-                locale.language,
-            )
-        headers['Accept-Language'] = ac_lang
-
-    get_sc_url = base_url + '/'
+    get_sc_url = base_url + "/"
     logger.debug("get_sc_code: querying new sc timestamp @ %s", get_sc_url)
+
+    headers = {**params["headers"]}
     logger.debug("get_sc_code: request headers: %s", headers)
     resp = get(get_sc_url, headers=headers)
+
+    if 'id="anubis_challenge"' in resp.text:
+        resp = get(get_sc_url, headers=headers, cookies={"spchal-auth": _solve_anubis(resp)})
 
     # ?? x = network.get('https://www.startpage.com/sp/cdn/images/filter-chevron.svg', headers=headers)
     # ?? https://www.startpage.com/sp/cdn/images/filter-chevron.svg
     # ?? ping-back URL: https://www.startpage.com/sp/pb?sc=TLsB0oITjZ8F21
 
-    if str(resp.url).startswith('https://www.startpage.com/sp/captcha'):  # type: ignore
+    if str(resp.url).startswith("https://www.startpage.com/sp/captcha"):
         raise SearxEngineCaptchaException(
             message="get_sc_code: got redirected to https://www.startpage.com/sp/captcha",
         )
 
-    dom = lxml.html.fromstring(resp.text)  # type: ignore
+    dom = resp.html()
 
     try:
         sc_code = eval_xpath(dom, search_form_xpath + '//input[@name="sc"]/@value')[0]
     except IndexError as exc:
         logger.debug("suspend startpage API --> https://github.com/searxng/searxng/pull/695")
         raise SearxEngineCaptchaException(
-            message="get_sc_code: [PR-695] querying new sc timestamp failed! (%s)" % resp.url,  # type: ignore
+            message="get_sc_code: [PR-695] querying new sc timestamp failed! (%s)" % resp.url,
         ) from exc
 
     sc_code = str(sc_code)
@@ -255,61 +285,64 @@ def request(query, params):
     Additionally the arguments form Startpage's search form needs to be set in
     HTML POST data / compare ``<input>`` elements: :py:obj:`search_form_xpath`.
     """
-    engine_region = traits.get_region(params['searxng_locale'], 'en-US')
-    engine_language = traits.get_language(params['searxng_locale'], 'en')
+    engine_region = traits.get_region(params["searxng_locale"], "en_US")
+    engine_language = traits.get_language(params["searxng_locale"], "english")
 
-    params['headers']['Origin'] = base_url
-    params['headers']['Referer'] = base_url + '/'
+    params["headers"]["Origin"] = base_url
+    params["headers"]["Referer"] = base_url + "/"
 
     # Build form data
     args = {
-        'query': query,
-        'cat': startpage_categ,
-        't': 'device',
-        'sc': get_sc_code(params['searxng_locale'], params),  # hint: this func needs HTTP headers
-        'with_date': time_range_dict.get(params['time_range'], ''),
-        'abp': '1',
-        'abd': '1',
-        'abe': '1',
+        "query": query,
+        "cat": startpage_categ,
+        "t": "device",
+        "sc": get_sc_code(params),
+        "with_date": time_range_dict.get(params["time_range"], ""),
+        "abd": "1",
+        "abe": "1",
+        "qsr": "all",
+        "qadf": safesearch_dict[params["safesearch"]],
     }
 
     if engine_language:
-        args['language'] = engine_language
-        args['lui'] = engine_language
+        args["language"] = engine_language
+        args["lui"] = engine_language
 
-    if params['pageno'] > 1:
-        args['page'] = params['pageno']
-        args['segment'] = 'startpage.udog'
+    args["segment"] = "startpage.udog"
+    if params["pageno"] > 1:
+        args["page"] = params["pageno"]
 
     # Build cookie
-    lang_homepage = 'en'
+    lang_homepage = "en"
     cookie = OrderedDict()
-    cookie['date_time'] = 'world'
-    cookie['disable_family_filter'] = safesearch_dict[params['safesearch']]
-    cookie['disable_open_in_new_window'] = '0'
-    cookie['enable_post_method'] = '1'  # hint: POST
-    cookie['enable_proxy_safety_suggest'] = '1'
-    cookie['enable_stay_control'] = '1'
-    cookie['instant_answers'] = '1'
-    cookie['lang_homepage'] = 's/device/%s/' % lang_homepage
-    cookie['num_of_results'] = '10'
-    cookie['suggestions'] = '1'
-    cookie['wt_unit'] = 'celsius'
+    cookie["date_time"] = "world"
+    cookie["disable_family_filter"] = safesearch_dict[params["safesearch"]]
+    cookie["disable_open_in_new_window"] = "0"
+    cookie["enable_post_method"] = "1"  # hint: POST
+    cookie["enable_proxy_safety_suggest"] = "1"
+    cookie["enable_stay_control"] = "1"
+    cookie["instant_answers"] = "1"
+    cookie["lang_homepage"] = "s/device/%s/" % lang_homepage
+    cookie["num_of_results"] = "10"
+    cookie["suggestions"] = "1"
+    cookie["wt_unit"] = "celsius"
 
     if engine_language:
-        cookie['language'] = engine_language
-        cookie['language_ui'] = engine_language
+        cookie["language"] = engine_language
+        cookie["language_ui"] = engine_language
 
     if engine_region:
-        cookie['search_results_region'] = engine_region
+        cookie["search_results_region"] = engine_region
 
-    params['cookies']['preferences'] = 'N1N'.join(["%sEEE%s" % x for x in cookie.items()])
-    logger.debug('cookie preferences: %s', params['cookies']['preferences'])
+    params["cookies"]["preferences"] = "N1N".join(["%sEEE%s" % x for x in cookie.items()])
+    if auth := CACHE.get("SPCHAL_AUTH"):
+        params["cookies"]["spchal-auth"] = auth
+    logger.debug("cookie preferences: %s", params["cookies"]["preferences"])
 
     logger.debug("data: %s", args)
-    params['data'] = args
-    params['method'] = 'POST'
-    params['url'] = search_url
+    params["data"] = args
+    params["method"] = "POST"
+    params["url"] = search_url
 
     return params
 
@@ -319,7 +352,7 @@ def _parse_published_date(content: str) -> tuple[str, datetime | None]:
 
     # check if search result starts with something like: "2 Sep 2014 ... "
     if re.match(r"^([1-9]|[1-2][0-9]|3[0-1]) [A-Z][a-z]{2} [0-9]{4} \.\.\. ", content):
-        date_pos = content.find('...') + 4
+        date_pos = content.find("...") + 4
         date_string = content[0 : date_pos - 5]
         # fix content string
         content = content[date_pos:]
@@ -331,11 +364,11 @@ def _parse_published_date(content: str) -> tuple[str, datetime | None]:
 
     # check if search result starts with something like: "5 days ago ... "
     elif re.match(r"^[0-9]+ days? ago \.\.\. ", content):
-        date_pos = content.find('...') + 4
+        date_pos = content.find("...") + 4
         date_string = content[0 : date_pos - 5]
 
         # calculate datetime
-        published_date = datetime.now() - timedelta(days=int(re.match(r'\d+', date_string).group()))  # type: ignore
+        published_date = datetime.now() - timedelta(days=int(re.match(r"\d+", date_string).group()))  # type: ignore
 
         # fix content string
         content = content[date_pos:]
@@ -344,84 +377,106 @@ def _parse_published_date(content: str) -> tuple[str, datetime | None]:
 
 
 def _get_web_result(result):
-    content = html_to_text(result.get('description'))
+    content = html_to_text(result.get("description"))
     content, publishedDate = _parse_published_date(content)
 
     return {
-        'url': result['clickUrl'],
-        'title': html_to_text(result['title']),
-        'content': content,
-        'publishedDate': publishedDate,
+        "url": result["clickUrl"],
+        "title": html_to_text(result["title"]),
+        "content": content,
+        "publishedDate": publishedDate,
     }
 
 
 def _get_news_result(result):
 
-    title = remove_pua_from_str(html_to_text(result['title']))
-    content = remove_pua_from_str(html_to_text(result.get('description')))
+    title = remove_pua_from_str(html_to_text(result["title"]))
+    content = remove_pua_from_str(html_to_text(result.get("description")))
 
     publishedDate = None
-    if result.get('date'):
-        publishedDate = datetime.fromtimestamp(result['date'] / 1000)
+    if result.get("date"):
+        try:
+            publishedDate = datetime.fromtimestamp(int(result["date"]) / 1000)
+        except (TypeError, ValueError):
+            pass
 
     thumbnailUrl = None
-    if result.get('thumbnailUrl'):
-        thumbnailUrl = base_url + result['thumbnailUrl']
+    if result.get("thumbnailUrl"):
+        thumbnailUrl = base_url + result["thumbnailUrl"]
 
     return {
-        'url': result['clickUrl'],
-        'title': title,
-        'content': content,
-        'publishedDate': publishedDate,
-        'thumbnail': thumbnailUrl,
+        "url": result["clickUrl"],
+        "title": title,
+        "content": content,
+        "publishedDate": publishedDate,
+        "thumbnail": thumbnailUrl,
     }
 
 
-def _get_image_result(result) -> dict[str, Any] | None:
-    url = result.get('altClickUrl')
+def _get_image_result(result) -> dict[str, t.Any] | None:
+    url = result.get("altClickUrl")
     if not url:
         return None
 
     thumbnailUrl = None
-    if result.get('thumbnailUrl'):
-        thumbnailUrl = base_url + result['thumbnailUrl']
+    if result.get("thumbnailUrl"):
+        thumbnailUrl = base_url + result["thumbnailUrl"]
 
     resolution = None
-    if result.get('width') and result.get('height'):
+    if result.get("width") and result.get("height"):
         resolution = f"{result['width']}x{result['height']}"
 
     filesize = None
-    if result.get('filesize'):
-        size_str = ''.join(filter(str.isdigit, result['filesize']))
+    if result.get("filesize"):
+        size_str = "".join(filter(str.isdigit, result["filesize"]))
         filesize = humanize_bytes(int(size_str))
 
+    img_format = result.get("format").upper()
+    if img_format == "UNKNOWN":
+        img_format = ""
     return {
-        'template': 'images.html',
-        'url': url,
-        'title': html_to_text(result['title']),
-        'content': '',
-        'img_src': result.get('rawImageUrl'),
-        'thumbnail_src': thumbnailUrl,
-        'resolution': resolution,
-        'img_format': result.get('format'),
-        'filesize': filesize,
+        "template": "images.html",
+        "url": url,
+        "title": html_to_text(result["title"]),
+        "content": "",
+        "img_src": result.get("rawImageUrl"),
+        "thumbnail_src": thumbnailUrl,
+        "resolution": resolution,
+        "img_format": img_format,
+        "filesize": filesize,
     }
 
 
 def response(resp):
+    if 'id="anubis_challenge"' in resp.text:
+        params = resp.search_params
+        params["cookies"]["spchal-auth"] = _solve_anubis(resp)
+        resp = post(
+            params["url"] or search_url,
+            data=params["data"],
+            headers=params["headers"],
+            cookies=params["cookies"],
+        )
+        if 'id="anubis_challenge"' in resp.text:
+            raise SearxEngineCaptchaException()
+
     categ = startpage_categ.capitalize()
-    results_raw = '{' + extr(resp.text, f"React.createElement(UIStartpage.AppSerp{categ}, {{", '}})') + '}}'
+    results_raw = "{" + extr(resp.text, f"React.createElement(UIStartpage.AppSerp{categ}, {{", "}})") + "}}"
+
+    if resp.headers.get("Location", "").startswith("https://www.startpage.com/sp/captcha"):
+        raise SearxEngineCaptchaException()
+
     results_json = loads(results_raw)
-    results_obj = results_json.get('render', {}).get('presenter', {}).get('regions', {})
+    results_obj = results_json.get("render", {}).get("presenter", {}).get("regions", {})
 
     results = []
-    for results_categ in results_obj.get('mainline', []):
-        for item in results_categ.get('results', []):
-            if results_categ['display_type'] == 'web-google':
+    for results_categ in results_obj.get("mainline", []):
+        for item in results_categ.get("results", []):
+            if results_categ["display_type"] == "web-google":
                 results.append(_get_web_result(item))
-            elif results_categ['display_type'] == 'news-bing':
+            elif results_categ["display_type"] == "news-bing":
                 results.append(_get_news_result(item))
-            elif 'images' in results_categ['display_type']:
+            elif "images" in results_categ["display_type"]:
                 item = _get_image_result(item)
                 if item:
                     results.append(item)
@@ -435,38 +490,42 @@ def fetch_traits(engine_traits: EngineTraits):
     # pylint: disable=too-many-branches
 
     headers = {
-        'User-Agent': gen_useragent(),
-        'Accept-Language': "en-US,en;q=0.5",  # bing needs to set the English language
+        "User-Agent": gen_useragent(),
+        "Accept-Language": "en-US,en;q=0.5",  # bing needs to set the English language
     }
-    resp = get('https://www.startpage.com/do/settings', headers=headers)
 
-    if not resp.ok:  # type: ignore
-        print("ERROR: response from Startpage is not OK.")
+    resp = get(
+        "https://www.startpage.com/do/settings",
+        headers=headers,
+        timeout=5,
+    )
+    if not resp.ok:
+        raise RuntimeError("Response from Startpage is not OK.")
 
-    dom = lxml.html.fromstring(resp.text)  # type: ignore
+    dom = resp.html()
 
     # regions
 
     sp_region_names = []
     for option in dom.xpath('//form[@name="settings"]//select[@name="search_results_region"]/option'):
-        sp_region_names.append(option.get('value'))
+        sp_region_names.append(option.get("value"))
 
     for eng_tag in sp_region_names:
-        if eng_tag == 'all':
+        if eng_tag == "all":
             continue
-        babel_region_tag = {'no_NO': 'nb_NO'}.get(eng_tag, eng_tag)  # norway
+        babel_region_tag = {"no_NO": "nb_NO"}.get(eng_tag, eng_tag)  # norway
 
-        if '-' in babel_region_tag:
-            l, r = babel_region_tag.split('-')
-            r = r.split('_')[-1]
-            sxng_tag = region_tag(babel.Locale.parse(l + '_' + r, sep='_'))
+        if "-" in babel_region_tag:  # pyright: ignore[reportOperatorIssue]
+            l, r = babel_region_tag.split("-")
+            r = r.split("_")[-1]
+            sxng_tag = region_tag(babel.Locale.parse(l + "_" + r, sep="_"))
 
         else:
             try:
-                sxng_tag = region_tag(babel.Locale.parse(babel_region_tag, sep='_'))
+                sxng_tag = region_tag(babel.Locale.parse(babel_region_tag, sep="_"))
 
             except babel.UnknownLocaleError:
-                print("ERROR: can't determine babel locale of startpage's locale %s" % eng_tag)
+                print("IGNORE: can't determine babel locale of startpage's locale %s" % eng_tag)
                 continue
 
         conflict = engine_traits.regions.get(sxng_tag)
@@ -478,21 +537,24 @@ def fetch_traits(engine_traits: EngineTraits):
 
     # languages
 
-    catalog_engine2code = {name.lower(): lang_code for lang_code, name in babel.Locale('en').languages.items()}
+    catalog_engine2code = {name.lower(): lang_code for lang_code, name in babel.Locale("en").languages.items()}
 
     # get the native name of every language known by babel
 
-    for lang_code in filter(lambda lang_code: lang_code.find('_') == -1, babel.localedata.locale_identifiers()):
+    for lang_code in filter(
+        lambda lang_code: lang_code.find("_") == -1,
+        babel.localedata.locale_identifiers(),
+    ):
         native_name = babel.Locale(lang_code).get_language_name()
         if not native_name:
-            print(f"ERROR: language name of startpage's language {lang_code} is unknown by babel")
+            print(f"IGNORE: language name of startpage's language {lang_code} is unknown by babel")
             continue
         native_name = native_name.lower()
         # add native name exactly as it is
         catalog_engine2code[native_name] = lang_code
 
         # add "normalized" language name (i.e. français becomes francais and español becomes espanol)
-        unaccented_name = ''.join(filter(lambda c: not combining(c), normalize('NFKD', native_name)))
+        unaccented_name = "".join(filter(lambda c: not combining(c), normalize("NFKD", native_name)))
         if len(unaccented_name) == len(unaccented_name.encode()):
             # add only if result is ascii (otherwise "normalization" didn't work)
             catalog_engine2code[unaccented_name] = lang_code
@@ -501,31 +563,35 @@ def fetch_traits(engine_traits: EngineTraits):
 
     catalog_engine2code.update(
         {
+            # Brazilian Portuguese
+            "brazilian": "pt_BR",
             # traditional chinese used in ..
-            'fantizhengwen': 'zh_Hant',
+            "fantizhengwen": "zh_Hant",
             # Korean alphabet
-            'hangul': 'ko',
+            "hangul": "ko",
             # Malayalam is one of 22 scheduled languages of India.
-            'malayam': 'ml',
-            'norsk': 'nb',
-            'sinhalese': 'si',
+            "malayam": "ml",
+            "norsk": "nb",
+            "sinhalese": "si",
         }
     )
 
     skip_eng_tags = {
-        'english_uk',  # SearXNG lang 'en' already maps to 'english'
+        "english_uk",  # SearXNG lang 'en' already maps to 'english'
     }
 
     for option in dom.xpath('//form[@name="settings"]//select[@name="language"]/option'):
-
-        eng_tag = option.get('value')
+        eng_tag = option.get("value")
         if eng_tag in skip_eng_tags:
             continue
         name = extract_text(option).lower()  # type: ignore
 
         sxng_tag = catalog_engine2code.get(eng_tag)
         if sxng_tag is None:
-            sxng_tag = catalog_engine2code[name]
+            sxng_tag = catalog_engine2code.get(name)
+        if sxng_tag is None:
+            # silently ignore unknown languages
+            continue
 
         conflict = engine_traits.languages.get(sxng_tag)
         if conflict:

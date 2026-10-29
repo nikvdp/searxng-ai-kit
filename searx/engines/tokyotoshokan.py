@@ -1,13 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Tokyo Toshokan (A BitTorrent Library for Japanese Media)
-
-"""
+"""Tokyo Toshokan (A BitTorrent Library for Japanese Media)"""
 
 import re
 from datetime import datetime
 from urllib.parse import urlencode
 
-from lxml import html
 from searx.utils import extract_text, int_or_zero
 
 # about
@@ -40,7 +37,7 @@ def request(query, params):
 def response(resp):
     results = []
 
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
     rows = dom.xpath('//table[@class="listing"]//tr[contains(@class, "category_0")]')
 
     # check if there are no results or page layout was changed so we cannot parse it

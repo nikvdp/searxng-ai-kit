@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""1x (Images)
-
-"""
+"""1x (Images)"""
 
 from urllib.parse import urlencode, urljoin
 from lxml import html, etree
@@ -19,7 +17,7 @@ about = {
 }
 
 # engine dependent config
-categories = ['images']
+categories = ["stock images"]
 paging = False
 
 # search-url

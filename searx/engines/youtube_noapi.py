@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Youtube (Videos)
-
-"""
+"""Youtube (Videos)"""
 
 from functools import reduce
 from json import loads, dumps
@@ -22,6 +20,7 @@ about = {
 # engine dependent config
 categories = ['videos', 'music']
 paging = True
+enable_http3 = True
 language_support = False
 time_range_support = True
 

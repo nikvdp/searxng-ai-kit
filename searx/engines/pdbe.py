@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- PDBe (Protein Data Bank in Europe)
+PDBe (Protein Data Bank in Europe)
 """
 
 from json import loads
@@ -67,7 +67,7 @@ def construct_body(result):
             )
         thumbnail = pdbe_preview_url.format(pdb_id=result['pdb_id'])
     except KeyError:
-        content = None
+        content = ""
         thumbnail = None
 
     # construct url for preview image

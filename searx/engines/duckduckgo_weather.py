@@ -3,7 +3,6 @@
 DuckDuckGo Weather
 ~~~~~~~~~~~~~~~~~~
 """
-from __future__ import annotations
 
 import typing as t
 from json import loads
@@ -13,19 +12,10 @@ from dateutil import parser as date_parser
 
 from searx.engines.duckduckgo import fetch_traits  # pylint: disable=unused-import
 from searx.engines.duckduckgo import get_ddg_lang
-from searx.enginelib.traits import EngineTraits
 
 from searx.result_types import EngineResults
 from searx.extended_types import SXNG_Response
 from searx import weather
-
-if t.TYPE_CHECKING:
-    import logging
-
-    logger: logging.Logger
-
-traits: EngineTraits
-
 
 about = {
     "website": 'https://duckduckgo.com/',
@@ -35,8 +25,7 @@ about = {
     "require_api_key": False,
     "results": "JSON",
 }
-
-send_accept_language_header = True
+language_support = True
 
 # engine dependent config
 categories = ["weather"]
@@ -85,12 +74,12 @@ def _weather_data(location: weather.GeoLocation, data: dict[str, t.Any]):
 
     return EngineResults.types.WeatherAnswer.Item(
         location=location,
-        temperature=weather.Temperature(unit="°C", value=data['temperature']),
+        temperature=weather.Temperature(val=data['temperature'], unit="°C"),
         condition=WEATHERKIT_TO_CONDITION[data["conditionCode"]],
-        feels_like=weather.Temperature(unit="°C", value=data['temperatureApparent']),
+        feels_like=weather.Temperature(val=data['temperatureApparent'], unit="°C"),
         wind_from=weather.Compass(data["windDirection"]),
-        wind_speed=weather.WindSpeed(data["windSpeed"], unit="mi/h"),
-        pressure=weather.Pressure(data["pressure"], unit="hPa"),
+        wind_speed=weather.WindSpeed(val=data["windSpeed"], unit="mi/h"),
+        pressure=weather.Pressure(val=data["pressure"], unit="hPa"),
         humidity=weather.RelativeHumidity(data["humidity"] * 100),
         cloud_cover=data["cloudCover"] * 100,
     )
@@ -119,7 +108,19 @@ def response(resp: SXNG_Response):
 
     json_data = loads(resp.text[resp.text.find('\n') + 1 : resp.text.rfind('\n') - 2])
 
-    geoloc = weather.GeoLocation.by_query(resp.search_params["query"])
+    location = json_data.get("location")
+    if not location:
+        return res
+
+    metadata = json_data.get("weatherAlerts", {}).get("metadata", {})
+    geoloc = weather.GeoLocation(
+        name=location,
+        latitude=metadata.get("latitude"),
+        longitude=metadata.get("longitude"),
+        elevation=0,
+        country_code=metadata.get("language").split("-")[-1],
+        timezone=json_data.get("location"),
+    )
 
     weather_answer = EngineResults.types.WeatherAnswer(
         current=_weather_data(geoloc, json_data["currentWeather"]),

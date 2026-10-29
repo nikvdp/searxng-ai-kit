@@ -5,8 +5,6 @@
 ----
 """
 
-from __future__ import annotations
-
 __all__ = ["ExpireCacheCfg", "ExpireCacheStats", "ExpireCache", "ExpireCacheSQLite"]
 
 import abc
@@ -31,6 +29,8 @@ from searx import get_setting
 
 log = logger.getChild("cache")
 
+CacheRowType: typing.TypeAlias = tuple[str, typing.Any, int | None]
+
 
 class ExpireCacheCfg(msgspec.Struct):  # pylint: disable=too-few-public-methods
     """Configuration of a :py:obj:`ExpireCache` cache."""
@@ -48,7 +48,7 @@ class ExpireCacheCfg(msgspec.Struct):  # pylint: disable=too-few-public-methods
     MAXHOLD_TIME: int = 60 * 60 * 24 * 7  # 7 days
     """Hold time (default in sec.), after which a value is removed from the cache."""
 
-    MAINTENANCE_PERIOD: int = 60 * 60  # 2h
+    MAINTENANCE_PERIOD: int = 60 * 60  # 1h
     """Maintenance period in seconds / when :py:obj:`MAINTENANCE_MODE` is set to
     ``auto``."""
 
@@ -64,7 +64,7 @@ class ExpireCacheCfg(msgspec.Struct):  # pylint: disable=too-few-public-methods
       if required.
     """
 
-    password: bytes = get_setting("server.secret_key").encode()  # type: ignore
+    password: bytes = get_setting("server.secret_key").encode()
     """Password used by :py:obj:`ExpireCache.secret_hash`.
 
     The default password is taken from :ref:`secret_key <server.secret_key>`.
@@ -83,7 +83,7 @@ class ExpireCacheCfg(msgspec.Struct):  # pylint: disable=too-few-public-methods
 class ExpireCacheStats:
     """Dataclass which provides information on the status of the cache."""
 
-    cached_items: dict[str, list[tuple[str, typing.Any, int]]]
+    cached_items: dict[str, list[CacheRowType]]
     """Values in the cache mapped by context name.
 
     .. code: python
@@ -101,7 +101,7 @@ class ExpireCacheStats:
     def report(self):
         c_ctx = 0
         c_kv = 0
-        lines = []
+        lines: list[str] = []
 
         for ctx_name, kv_list in self.cached_items.items():
             c_ctx += 1
@@ -110,9 +110,17 @@ class ExpireCacheStats:
                 continue
 
             for key, value, expire in kv_list:
-                valid_until = datetime.datetime.fromtimestamp(expire).strftime("%Y-%m-%d %H:%M:%S")
+                valid_until = ""
+                if expire:
+                    valid_until = datetime.datetime.fromtimestamp(expire).strftime("%Y-%m-%d %H:%M:%S")
                 c_kv += 1
-                lines.append(f"[{ctx_name:20s}] {valid_until} {key:12}" f" --> ({type(value).__name__}) {value} ")
+                value_str = str(value)
+                if len(value_str) > 120:
+                    value_str = f"{value_str[:120]} ..."
+                lines.append(
+                    f"[{ctx_name:20s}] {valid_until} {key:12}"
+                    f" --> ({type(value).__name__}:{len(value)}) {value_str} "
+                )
 
         lines.append(f"Number of contexts: {c_ctx}")
         lines.append(f"number of key/value pairs: {c_kv}")
@@ -125,7 +133,7 @@ class ExpireCache(abc.ABC):
 
     cfg: ExpireCacheCfg
 
-    hash_token = "hash_token"
+    hash_token: str = "hash_token"
 
     @abc.abstractmethod
     def set(self, key: str, value: typing.Any, expire: int | None, ctx: str | None = None) -> bool:
@@ -148,7 +156,7 @@ class ExpireCache(abc.ABC):
         """
 
     @abc.abstractmethod
-    def get(self, key: str, default=None, ctx: str | None = None) -> typing.Any:
+    def get(self, key: str, default: typing.Any = None, ctx: str | None = None) -> typing.Any:
         """Return *value* of *key*.  If key is unset, ``None`` is returned."""
 
     @abc.abstractmethod
@@ -170,7 +178,7 @@ class ExpireCache(abc.ABC):
         about the status of the cache."""
 
     @staticmethod
-    def build_cache(cfg: ExpireCacheCfg) -> ExpireCache:
+    def build_cache(cfg: ExpireCacheCfg) -> "ExpireCacheSQLite":
         """Factory to build a caching instance.
 
         .. note::
@@ -222,18 +230,18 @@ class ExpireCacheSQLite(sqlitedb.SQLiteAppl, ExpireCache):
     - :py:obj:`ExpireCacheCfg.MAINTENANCE_MODE`
     """
 
-    DB_SCHEMA = 1
+    DB_SCHEMA: int = 1
 
     # The key/value tables will be created on demand by self.create_table
-    DDL_CREATE_TABLES = {}
+    DDL_CREATE_TABLES: dict[str, str] = {}
 
-    CACHE_TABLE_PREFIX = "CACHE-TABLE"
+    CACHE_TABLE_PREFIX: str = "CACHE-TABLE"
 
     def __init__(self, cfg: ExpireCacheCfg):
         """An instance of the SQLite expire cache is build up from a
         :py:obj:`config <ExpireCacheCfg>`."""
 
-        self.cfg = cfg
+        self.cfg: ExpireCacheCfg = cfg
         if cfg.db_url == ":memory:":
             log.critical("don't use SQLite DB in :memory: in production!!")
         super().__init__(cfg.db_url)
@@ -341,48 +349,105 @@ class ExpireCacheSQLite(sqlitedb.SQLiteAppl, ExpireCache):
         exists, it will be created (on demand) by :py:obj:`self.create_table
         <ExpireCacheSQLite.create_table>`.
         """
+        c, err_msg_list = self._setmany([(key, value, expire)], ctx=ctx)
+        if c:
+            log.debug("%s -- %s: key '%s' updated or inserted (%s errors)", self.cfg.name, ctx, key, len(err_msg_list))
+        else:
+            for msg in err_msg_list:
+                log.error("%s -- %s: %s", self.cfg.name, ctx, msg)
+        return bool(c)
+
+    def setmany(
+        self,
+        opt_list: list[CacheRowType],
+        ctx: str | None = None,
+    ) -> int:
+        """Efficient bootload of the cache from a list of options.  The list
+        contains tuples with the arguments described in
+        :py:obj:`ExpireCacheSQLite.set`."""
+        _start = time.time()
+        c, err_msg_list = self._setmany(opt_list=opt_list, ctx=ctx)
+        _end = time.time()
+        for msg in err_msg_list:
+            log.error("%s -- %s: %s", self.cfg.name, ctx, msg)
+
+        log.debug(
+            "%s -- %s: %s/%s key/value pairs updated or inserted in %s sec (%s errors)",
+            self.cfg.name,
+            ctx,
+            c,
+            len(opt_list),
+            _end - _start,
+            len(err_msg_list),
+        )
+        return c
+
+    def _setmany(
+        self,
+        opt_list: list[CacheRowType],
+        ctx: str | None = None,
+    ) -> tuple[int, list[str]]:
+
         table = ctx
         self.maintenance()
-
-        value = self.serialize(value=value)
-        if len(value) > self.cfg.MAX_VALUE_LEN:
-            log.warning("ExpireCache.set(): %s.key='%s' - value too big to cache (len: %s)  ", table, value, len(value))
-            return False
-
-        if not expire:
-            expire = self.cfg.MAXHOLD_TIME
-        expire = int(time.time()) + expire
 
         table_name = table
         if not table_name:
             table_name = self.normalize_name(self.cfg.name)
         self.create_table(table_name)
 
-        sql = (
+        sql_str = (
             f"INSERT INTO {table_name} (key, value, expire) VALUES (?, ?, ?)"
             f"    ON CONFLICT DO "
             f"UPDATE SET value=?, expire=?"
         )
 
+        sql_rows: list[
+            tuple[
+                str,  # key
+                typing.Any,  # value
+                int | None,  # expire
+                typing.Any,  # value
+                int | None,  # expire
+            ]
+        ] = []
+
+        err_msg_list: list[str] = []
+        for key, _val, expire in opt_list:
+
+            value: bytes = self.serialize(value=_val)
+            if len(value) > self.cfg.MAX_VALUE_LEN:
+                err_msg_list.append(f"{table}.key='{key}' - serialized value too big to cache (len: {len(value)}) ")
+                continue
+
+            if not expire:
+                expire = self.cfg.MAXHOLD_TIME
+            expire = int(time.time()) + expire
+
+            # positional arguments of the INSERT INTO statement
+            sql_args = (key, value, expire, value, expire)
+            sql_rows.append(sql_args)
+
+        if not sql_rows:
+            return 0, err_msg_list
+
         if table:
             with self.DB:
-                self.DB.execute(sql, (key, value, expire, value, expire))
+                self.DB.executemany(sql_str, sql_rows)
         else:
             with self.connect() as conn:
-                conn.execute(sql, (key, value, expire, value, expire))
+                conn.executemany(sql_str, sql_rows)
             conn.close()
 
-        return True
+        return len(sql_rows), err_msg_list
 
-    def get(self, key: str, default=None, ctx: str | None = None) -> typing.Any:
+    def get(self, key: str, default: typing.Any = None, ctx: str | None = None) -> typing.Any:
         """Get value of ``key`` from table given by argument ``ctx``.  If
         ``ctx`` argument is ``None`` (the default), a table name is generated
-        from the :py:obj:`ExpireCacheCfg.name`.  If ``key`` not exists (in
-        table), the ``default`` value is returned.
-
+        from the :py:obj:`ExpireCacheCfg.name`.  If ``key`` not exists in
+        the table or the table not exists, the ``default`` value is returned.
         """
         table = ctx
-        self.maintenance()
 
         if not table:
             table = self.normalize_name(self.cfg.name)
@@ -390,29 +455,44 @@ class ExpireCacheSQLite(sqlitedb.SQLiteAppl, ExpireCache):
         if table not in self.table_names:
             return default
 
-        sql = f"SELECT value FROM {table} WHERE key = ?"
+        # Before values are taken from the table, a maintenance interval may
+        # need to be carried out.
+        self.maintenance()
+        sql = f"SELECT value, expire FROM {table} WHERE key = ?"
         row = self.DB.execute(sql, (key,)).fetchone()
         if row is None:
             return default
 
-        return self.deserialize(row[0])
+        # Check if value is expired. It's possible that it's expired but has not
+        # yet been automatically deleted by the periodic maintenance
+        value, expire = row
+        now = time.time()
+        if expire < now:
+            # The record is deleted during the maintenance interval. Deleting
+            # the record at this point offers no advantage, as a SELECT
+            # statement must be executed for every cache.get request anyways.
+            return default
+
+        return self.deserialize(value)
 
     def pairs(self, ctx: str) -> Iterator[tuple[str, typing.Any]]:
         """Iterate over key/value pairs from table given by argument ``ctx``.
         If ``ctx`` argument is ``None`` (the default), a table name is
         generated from the :py:obj:`ExpireCacheCfg.name`."""
         table = ctx
-        self.maintenance()
 
         if not table:
             table = self.normalize_name(self.cfg.name)
 
         if table in self.table_names:
+            # Before values are taken from the table, a maintenance interval may
+            # need to be carried out.
+            self.maintenance()
             for row in self.DB.execute(f"SELECT key, value FROM {table}"):
                 yield row[0], self.deserialize(row[1])
 
     def state(self) -> ExpireCacheStats:
-        cached_items = {}
+        cached_items: dict[str, list[CacheRowType]] = {}
         for table in self.table_names:
             cached_items[table] = []
             for row in self.DB.execute(f"SELECT key, value, expire FROM {table}"):

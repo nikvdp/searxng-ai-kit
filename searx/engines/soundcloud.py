@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """SoundCloud is a German audio streaming service."""
-from __future__ import annotations
 
+import typing as t
 import re
-import typing
 import datetime
 
 from urllib.parse import quote_plus, urlencode
@@ -13,11 +12,6 @@ from lxml import html
 
 from searx.network import get as http_get
 from searx.enginelib import EngineCache
-
-if typing.TYPE_CHECKING:
-    import logging
-
-    logger: logging.Logger
 
 about = {
     "website": "https://soundcloud.com",
@@ -122,16 +116,17 @@ def response(resp):
     return results
 
 
-def init(engine_settings):  # pylint: disable=unused-argument
+def setup(engine_settings: dict[str, t.Any]) -> bool:
     global CACHE  # pylint: disable=global-statement
-    CACHE = EngineCache(engine_settings["name"])  # type:ignore
+    CACHE = EngineCache(engine_settings["name"])  # type: ignore
+    return True
 
 
 def get_client_id() -> str | None:
 
     client_id = ""
     url = "https://soundcloud.com"
-    resp = http_get(url, timeout=10)
+    resp = http_get(url, timeout=3)
 
     if not resp.ok:
         logger.error("init: GET %s failed", url)

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Tootfinder (social media)
-"""
+"""Tootfinder (social media)"""
 
 from datetime import datetime
 from json import loads
@@ -52,7 +51,7 @@ def response(resp):
                 'title': title,
                 'content': html_to_text(result['content']),
                 'thumbnail': thumbnail,
-                'publishedDate': datetime.strptime(result['created_at'], '%Y-%m-%d %H:%M:%S'),
+                'publishedDate': datetime.fromisoformat(result['created_at']),
             }
         )
 

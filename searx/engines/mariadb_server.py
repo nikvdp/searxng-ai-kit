@@ -26,7 +26,7 @@ Implementations
 
 """
 
-from typing import TYPE_CHECKING
+import typing as t
 
 try:
     import mariadb  # pyright: ignore [reportMissingImports]
@@ -36,12 +36,6 @@ except ImportError:
     pass
 
 from searx.result_types import EngineResults
-
-if TYPE_CHECKING:
-    import logging
-
-    logger = logging.getLogger()
-
 
 engine_type = 'offline'
 
@@ -68,14 +62,16 @@ paging = True
 _connection = None
 
 
-def init(engine_settings):
-    global _connection  # pylint: disable=global-statement
-
+def setup(engine_settings: dict[str, t.Any]) -> bool | None:
     if 'query_str' not in engine_settings:
         raise ValueError('query_str cannot be empty')
 
     if not engine_settings['query_str'].lower().startswith('select '):
         raise ValueError('only SELECT query is supported')
+
+
+def init(_):
+    global _connection  # pylint: disable=global-statement
 
     _connection = mariadb.connect(database=database, user=username, password=password, host=host, port=port)
 

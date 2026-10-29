@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- Doku Wiki
+Doku Wiki
 """
 
 from urllib.parse import urlencode
@@ -21,7 +21,6 @@ about = {
 # engine dependent config
 categories = ['general']  # 'images', 'music', 'videos', 'files'
 paging = False
-number_of_results = 5
 
 # search-url
 # Doku is OpenSearch compatible

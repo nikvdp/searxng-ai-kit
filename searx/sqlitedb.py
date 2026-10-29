@@ -19,8 +19,8 @@ Examplarical implementations based on :py:obj:`SQLiteAppl`:
 
 ----
 """
-from __future__ import annotations
 
+import typing as t
 import abc
 import datetime
 import re
@@ -40,25 +40,27 @@ class DBSession:
     """A *thead-local* DB session"""
 
     @classmethod
-    def get_connect(cls, app: SQLiteAppl) -> sqlite3.Connection:
+    def get_connect(cls, app: "SQLiteAppl") -> sqlite3.Connection:
         """Returns a thread local DB connection.  The connection is only
         established once per thread.
         """
         if getattr(THREAD_LOCAL, "DBSession_map", None) is None:
-            THREAD_LOCAL.DBSession_map = {}
+            url_to_session: dict[str, DBSession] = {}
+            THREAD_LOCAL.DBSession_map = url_to_session
 
-        session = THREAD_LOCAL.DBSession_map.get(app.db_url)
+        session: DBSession | None = THREAD_LOCAL.DBSession_map.get(app.db_url)
         if session is None:
             session = cls(app)
         return session.conn
 
-    def __init__(self, app: SQLiteAppl):
-        self.uuid = uuid.uuid4()
-        self.app = app
-        self._conn = None
+    def __init__(self, app: "SQLiteAppl"):
+        self.uuid: uuid.UUID = uuid.uuid4()
+        self.app: SQLiteAppl = app
+        self._conn: sqlite3.Connection | None = None
         # self.__del__ will be called, when thread ends
         if getattr(THREAD_LOCAL, "DBSession_map", None) is None:
-            THREAD_LOCAL.DBSession_map = {}
+            url_to_session: dict[str, DBSession] = {}
+            THREAD_LOCAL.DBSession_map = url_to_session
         THREAD_LOCAL.DBSession_map[self.app.db_url] = self
 
     @property
@@ -98,7 +100,7 @@ class SQLiteAppl(abc.ABC):
     increased.  Changes to the version number require the DB to be recreated (or
     migrated / if an migration path exists and is implemented)."""
 
-    SQLITE_THREADING_MODE = {
+    SQLITE_THREADING_MODE: str = {
         0: "single-thread",
         1: "multi-thread",
         3: "serialized"}[sqlite3.threadsafety]  # fmt:skip
@@ -113,26 +115,31 @@ class SQLiteAppl(abc.ABC):
     it is not necessary to create a separate DB connector for each thread.
     """
 
-    SQLITE_JOURNAL_MODE = "WAL"
+    SQLITE_JOURNAL_MODE: str = "WAL"
     """``SQLiteAppl`` applications are optimized for WAL_ mode, its not recommend
     to change the journal mode (see :py:obj:`SQLiteAppl.tear_down`).
 
     .. _WAL: https://sqlite.org/wal.html
     """
-    SQLITE_CONNECT_ARGS = {
-        # "timeout": 5.0,
+    SQLITE_CONNECT_ARGS: dict[str, str | float | int | bool | None] = {
+        "timeout": 3.0,  # default is 5sec
         # "detect_types": 0,
         "check_same_thread": bool(SQLITE_THREADING_MODE != "serialized"),
         "cached_statements": 0,  # https://github.com/python/cpython/issues/118172
         # "uri": False,
-        "isolation_level": None,
+        # "isolation_level": "",
+        # "autocommit": sqlite3.LEGACY_TRANSACTION_CONTROL,
     }  # fmt:skip
     """Connection arguments (:py:obj:`sqlite3.connect`)
 
-    ``check_same_thread``:
+    ``check_same_thread``: *bool*
       Is disabled by default when :py:obj:`SQLITE_THREADING_MODE` is
-      ``serialized``.  The check is more of a hindrance in this case because it
-      would prevent a DB connector from being used in multiple threads.
+      `serialized`.  The check is more of a hindrance when threadsafety_ is
+      `serialized` because it would prevent a DB connector from being used in
+      multiple threads.
+
+      Is enabled when threadsafety_ is ``single-thread`` or ``multi-thread``
+      (when threads cannot share a connection PEP-0249_).
 
     ``cached_statements``:
       Is set to ``0`` by default.  Note: Python 3.12+ fetch result are not
@@ -147,13 +154,48 @@ class SQLiteAppl(abc.ABC):
 
       The workaround for SQLite3 multithreading cache inconsistency is to set
       option ``cached_statements`` to ``0`` by default.
+
+    ``isolation_level``: *unset*
+      If the connection attribute isolation_level_ is **not** ``None``, new
+      transactions are implicitly opened before ``execute()`` and
+      ``executemany()`` executes SQL- INSERT, UPDATE, DELETE, or REPLACE
+      statements `[1]`_.
+
+      By default, the value is not set, which means the default from Python is
+      used: Python's default is ``""``, which is an alias for ``"DEFERRED"``.
+
+    ``autocommit``: *unset*
+      Starting with Python 3.12 the DB connection has a ``autocommit`` attribute
+      and the recommended way of controlling transaction behaviour is through
+      this attribute `[2]`_.
+
+      By default, the value is not set, which means the default from Python is
+      used: Python's default is the constant LEGACY_TRANSACTION_CONTROL_:
+      Pre-Python 3.12 (non-PEP 249-compliant) transaction control, see
+      ``isolation_level`` above for more details.
+
+    .. _PEP-0249:
+        https://peps.python.org/pep-0249/#threadsafety
+    .. _threadsafety:
+        https://docs.python.org/3/library/sqlite3.html#sqlite3.threadsafety
+    .. _isolation_level:
+        https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.isolation_level
+    .. _[1]:
+        https://docs.python.org/3/library/sqlite3.html#sqlite3-transaction-control-isolation-level
+    .. _autocommit:
+        https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.autocommit
+    .. _[2]:
+        https://docs.python.org/3/library/sqlite3.html#transaction-control-via-the-autocommit-attribute
+    .. _LEGACY_TRANSACTION_CONTROL:
+        https://docs.python.org/3/library/sqlite3.html#sqlite3.LEGACY_TRANSACTION_CONTROL
     """
 
-    def __init__(self, db_url):
+    def __init__(self, db_url: str):
 
-        self.db_url = db_url
-        self.properties = SQLiteProperties(db_url)
-        self._init_done = False
+        self.db_url: str = db_url
+        self.properties: SQLiteProperties = SQLiteProperties(db_url)
+        self._init_done: bool = False
+        self._DB: sqlite3.Connection | None = None
         self._compatibility()
         # atexit.register(self.tear_down)
 
@@ -187,7 +229,13 @@ class SQLiteAppl(abc.ABC):
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.Connection(self.db_url, **self.SQLITE_CONNECT_ARGS)  # type: ignore
-        conn.execute(f"PRAGMA journal_mode={self.SQLITE_JOURNAL_MODE}")
+        try:
+            with conn:
+                conn.execute(f"PRAGMA journal_mode={self.SQLITE_JOURNAL_MODE}")
+        except sqlite3.OperationalError:
+            # when database is locked, the journal_mode is already set by
+            # different but concurrent process (no need to set it once more)
+            pass
         self.register_functions(conn)
         return conn
 
@@ -200,7 +248,7 @@ class SQLiteAppl(abc.ABC):
         """
         if sys.version_info < (3, 12):
             # Prior Python 3.12 there is no "autocommit" option
-            self.SQLITE_CONNECT_ARGS.pop("autocommit", None)
+            self.SQLITE_CONNECT_ARGS.pop("autocommit", None)  # pyright: ignore[reportUnreachable]
 
         msg = (
             f"[{threading.current_thread().ident}] {self.__class__.__name__}({self.db_url})"
@@ -212,7 +260,7 @@ class SQLiteAppl(abc.ABC):
             self.init(conn)
         return conn
 
-    def register_functions(self, conn):
+    def register_functions(self, conn: sqlite3.Connection):
         """Create user-defined_ SQL functions.
 
         ``REGEXP(<pattern>, <field>)`` : 0 | 1
@@ -234,7 +282,7 @@ class SQLiteAppl(abc.ABC):
         .. _re.search: https://docs.python.org/3/library/re.html#re.search
         """
 
-        conn.create_function("regexp", 2, lambda x, y: 1 if re.search(x, y) else 0, deterministic=True)
+        conn.create_function("regexp", 2, lambda x, y: 1 if re.search(x, y) else 0, deterministic=True)  # type: ignore
 
     @property
     def DB(self) -> sqlite3.Connection:
@@ -252,7 +300,7 @@ class SQLiteAppl(abc.ABC):
             https://docs.python.org/3/library/sqlite3.html#sqlite3-controlling-transactions
         """
 
-        conn = None
+        conn: sqlite3.Connection
 
         if self.SQLITE_THREADING_MODE == "serialized":
             # Theoretically it is possible to reuse the DB cursor across threads
@@ -271,7 +319,8 @@ class SQLiteAppl(abc.ABC):
         # Since more than one instance of SQLiteAppl share the same DB
         # connection, we need to make sure that each SQLiteAppl instance has run
         # its init method at least once.
-        self.init(conn)
+        with conn:
+            self.init(conn)
 
         return conn
 
@@ -289,7 +338,8 @@ class SQLiteAppl(abc.ABC):
         self._init_done = True
 
         logger.debug("init DB: %s", self.db_url)
-        self.properties.init(conn)
+        with conn:
+            self.properties.init(conn)
 
         ver = self.properties("DB_SCHEMA")
         if ver is None:
@@ -328,9 +378,9 @@ class SQLiteProperties(SQLiteAppl):
 
     """
 
-    SQLITE_JOURNAL_MODE = "WAL"
+    SQLITE_JOURNAL_MODE: str = "WAL"
 
-    DDL_PROPERTIES = """\
+    DDL_PROPERTIES: str = """\
 CREATE TABLE IF NOT EXISTS properties (
   name       TEXT,
   value      TEXT,
@@ -339,24 +389,25 @@ CREATE TABLE IF NOT EXISTS properties (
 
     """Table to store properties of the DB application"""
 
-    SQL_GET = "SELECT value FROM properties WHERE name = ?"
-    SQL_M_TIME = "SELECT m_time FROM properties WHERE name = ?"
-    SQL_SET = (
+    SQL_GET: str = "SELECT value FROM properties WHERE name = ?"
+    SQL_M_TIME: str = "SELECT m_time FROM properties WHERE name = ?"
+    SQL_SET: str = (
         "INSERT INTO properties (name, value) VALUES (?, ?)"
         "    ON CONFLICT(name) DO UPDATE"
         "   SET value=excluded.value, m_time=strftime('%s', 'now')"
     )
-    SQL_DELETE = "DELETE FROM properties WHERE name = ?"
-    SQL_TABLE_EXISTS = (
+    SQL_DELETE: str = "DELETE FROM properties WHERE name = ?"
+    SQL_TABLE_EXISTS: str = (
         "SELECT name FROM sqlite_master"
         " WHERE type='table' AND name='properties'"
     )  # fmt:skip
-    SQLITE_CONNECT_ARGS = dict(SQLiteAppl.SQLITE_CONNECT_ARGS)
+    SQLITE_CONNECT_ARGS: dict[str, str | int | bool | None] = dict(SQLiteAppl.SQLITE_CONNECT_ARGS)
 
-    def __init__(self, db_url: str):  # pylint: disable=super-init-not-called
+    # pylint: disable=super-init-not-called
+    def __init__(self, db_url: str):  # pyright: ignore[reportMissingSuperCall]
 
-        self.db_url = db_url
-        self._init_done = False
+        self.db_url: str = db_url
+        self._init_done: bool = False
         self._compatibility()
 
     def init(self, conn: sqlite3.Connection) -> bool:
@@ -367,11 +418,11 @@ CREATE TABLE IF NOT EXISTS properties (
         self._init_done = True
         logger.debug("init properties of DB: %s", self.db_url)
         res = conn.execute(self.SQL_TABLE_EXISTS)
-        if res.fetchone() is None:  # DB schema needs to be be created
+        if res.fetchone() is None:  # DB schema needs to be created
             self.create_schema(conn)
         return True
 
-    def __call__(self, name: str, default=None):
+    def __call__(self, name: str, default: t.Any = None) -> t.Any:
         """Returns the value of the property ``name`` or ``default`` if property
         not exists in DB."""
 
@@ -393,7 +444,7 @@ CREATE TABLE IF NOT EXISTS properties (
             cur = self.DB.execute(self.SQL_DELETE, (name,))
         return cur.rowcount
 
-    def row(self, name: str, default=None):
+    def row(self, name: str, default: t.Any = None):
         """Returns the DB row of property ``name`` or ``default`` if property
         not exists in DB."""
 
@@ -413,12 +464,12 @@ CREATE TABLE IF NOT EXISTS properties (
             return default
         return int(row[0])
 
-    def create_schema(self, conn):
+    def create_schema(self, conn: sqlite3.Connection):
         with conn:
             conn.execute(self.DDL_PROPERTIES)
 
     def __str__(self) -> str:
-        lines = []
+        lines: list[str] = []
         for row in self.DB.execute("SELECT name, value, m_time FROM properties"):
             name, value, m_time = row
             m_time = datetime.datetime.fromtimestamp(m_time).strftime("%Y-%m-%d %H:%M:%S")

@@ -74,8 +74,7 @@ Implementations
 ===============
 """
 
-from __future__ import annotations
-
+import typing as t
 from urllib.parse import urlencode
 from dateutil.parser import parse
 from searx.utils import html_to_text, humanize_number
@@ -116,7 +115,7 @@ def absolute_url(relative_url):
     return f'{base_url.rstrip("/")}{relative_url}'
 
 
-def init(_):
+def setup(_: dict[str, t.Any]) -> bool | None:
     if not base_url:
         raise ValueError('tubearchivist engine: base_url is unset')
     if not ta_token:
@@ -128,7 +127,7 @@ def request(query, params):
         return False
 
     args = {'query': query}
-    params['url'] = f"{base_url.rstrip('/')}/api/search?{urlencode(args)}"
+    params['url'] = f"{base_url.rstrip('/')}/api/search/?{urlencode(args)}"
     params['headers']['Authorization'] = f'Token {ta_token}'
 
     return params

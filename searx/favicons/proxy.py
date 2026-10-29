@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Implementations for a favicon proxy"""
 
-from __future__ import annotations
-
 from typing import Callable
 
 import importlib
@@ -11,7 +9,7 @@ import pathlib
 import urllib.parse
 
 import flask
-from httpx import HTTPError
+from curl_cffi.requests.exceptions import RequestException
 import msgspec
 
 from searx import get_setting
@@ -24,10 +22,10 @@ from .resolvers import DEFAULT_RESOLVER_MAP
 from . import cache
 
 DEFAULT_FAVICON_URL = {}
-CFG: FaviconProxyConfig = None  # type: ignore
+CFG: "FaviconProxyConfig" = None  # type: ignore
 
 
-def init(cfg: FaviconProxyConfig):
+def init(cfg: "FaviconProxyConfig"):
     global CFG  # pylint: disable=global-statement
     CFG = cfg
 
@@ -186,7 +184,7 @@ def search_favicon(resolver: str, authority: str) -> tuple[None | bytes, None | 
         if data is None or mime is None:
             data, mime = (None, None)
 
-    except (HTTPError, SearxEngineResponseException):
+    except (RequestException, SearxEngineResponseException):
         pass
 
     cache.CACHE.set(resolver, authority, mime, data)

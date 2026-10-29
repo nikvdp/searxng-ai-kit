@@ -23,7 +23,8 @@ The engine has the following (additional) settings:
 - :py:obj:`search_type`
 
 The :py:obj:`base_url` has to be set in the engine named `yacy` and is used by
-all yacy engines.
+all yacy engines (unless an individual value for ``base_url`` is configured for
+the engine).
 
 .. code:: yaml
 
@@ -49,16 +50,16 @@ all yacy engines.
 Implementations
 ===============
 """
+
 # pylint: disable=fixme
 
-from __future__ import annotations
-
+import typing as t
 import random
 from json import loads
 from urllib.parse import urlencode
 from dateutil import parser
 
-from httpx import DigestAuth
+from curl_cffi import CurlOpt
 
 from searx.utils import html_to_text
 
@@ -75,7 +76,7 @@ about = {
 # engine dependent config
 categories = ['general']
 paging = True
-number_of_results = 10
+page_size = 10
 http_digest_auth_user = ""
 """HTTP digest user for the local YACY instance"""
 http_digest_auth_pass = ""
@@ -96,13 +97,13 @@ search_type = 'text'
 ``video`` are not yet implemented (Pull-Requests are welcome).
 """
 
-base_url: list | str = 'https://yacy.searchlab.eu'
+base_url: list[str] | str = []
 """The value is an URL or a list of URLs.  In the latter case instance will be
 selected randomly.
 """
 
 
-def init(_):
+def setup(_: dict[str, t.Any]) -> bool | None:
     valid_types = [
         'text',
         'image',
@@ -115,7 +116,7 @@ def init(_):
 def _base_url() -> str:
     from searx.engines import engines  # pylint: disable=import-outside-toplevel
 
-    url = engines['yacy'].base_url  # type: ignore
+    url: list[str] | str = base_url or engines["yacy"].base_url  # type: ignore
     if isinstance(url, list):
         url = random.choice(url)
     if url.endswith("/"):
@@ -125,11 +126,11 @@ def _base_url() -> str:
 
 def request(query, params):
 
-    offset = (params['pageno'] - 1) * number_of_results
+    offset = (params['pageno'] - 1) * page_size
     args = {
         'query': query,
         'startRecord': offset,
-        'maximumRecords': number_of_results,
+        'maximumRecords': page_size,
         'contentdom': search_type,
         'resource': search_mode,
     }
@@ -141,7 +142,10 @@ def request(query, params):
     params["url"] = f"{_base_url()}/yacysearch.json?{urlencode(args)}"
 
     if http_digest_auth_user and http_digest_auth_pass:
-        params['auth'] = DigestAuth(http_digest_auth_user, http_digest_auth_pass)
+        params['curl_options'] = {
+            CurlOpt.HTTPAUTH: 2,  # CURLAUTH_DIGEST
+            CurlOpt.USERPWD: f"{http_digest_auth_user}:{http_digest_auth_pass}",
+        }
 
     return params
 

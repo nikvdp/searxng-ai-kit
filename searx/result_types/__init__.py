@@ -9,29 +9,56 @@
    gradually.  For more, please read :ref:`result types`.
 
 """
+
 # pylint: disable=too-few-public-methods
 
-from __future__ import annotations
 
-__all__ = ["Result", "MainResult", "KeyValue", "EngineResults", "AnswerSet", "Answer", "Translations", "WeatherAnswer"]
+__all__ = [
+    "Result",
+    "MainResult",
+    "LegacyResult",
+    "KeyValue",
+    "EngineResults",
+    "AnswerSet",
+    "Answer",
+    "Translations",
+    "WeatherAnswer",
+    "Code",
+    "Paper",
+    "File",
+    "Image",
+    "ImageRef",
+    "Video",
+]
 
+import typing as t
 import abc
-
-from searx import enginelib
 
 from ._base import Result, MainResult, LegacyResult
 from .answer import AnswerSet, Answer, Translations, WeatherAnswer
 from .keyvalue import KeyValue
+from .code import Code
+from .paper import Paper
+from .file import File
+from .image import Image, ImageRef
+from .video import Video
 
 
-class ResultList(list, abc.ABC):
+class ResultList(list[Result | LegacyResult], abc.ABC):
     """Base class of all result lists (abstract)."""
 
+    @t.final
     class types:  # pylint: disable=invalid-name
-        """The collection of result types (which have already been implemented)."""
+        """The collection of result types (which have already been
+        implemented)."""
 
         Answer = Answer
         KeyValue = KeyValue
+        Code = Code
+        Paper = Paper
+        File = File
+        Image = Image
+        Video = Video
         MainResult = MainResult
         Result = Result
         Translations = Translations

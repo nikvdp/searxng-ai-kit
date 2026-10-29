@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- Wolfram|Alpha (Science)
+Wolfram|Alpha (Science)
 """
 
-from __future__ import annotations
-
+import typing as t
 from json import loads
 from urllib.parse import urlencode
 
@@ -52,9 +51,9 @@ CACHE: EngineCache
 seconds."""
 
 
-def init(engine_settings):
+def setup(engine_settings: dict[str, t.Any]) -> bool | None:
     global CACHE  # pylint: disable=global-statement
-    CACHE = EngineCache(engine_settings["name"])  # type:ignore
+    CACHE = EngineCache(engine_settings["name"])  # type: ignore
 
 
 def obtain_token() -> str:

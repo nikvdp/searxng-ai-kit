@@ -1,7 +1,6 @@
 # -*- mode: python -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A SearXNG message file, see :py:obj:`searx.babel`
-"""
+"""A SearXNG message file, see :py:obj:`searx.babel`"""
 
 import typing
 
@@ -9,11 +8,9 @@ from searx import webutils
 from searx import engines
 from searx.weather import WeatherConditionType
 
-
 __all__ = [
     'CONSTANT_NAMES',
     'CATEGORY_NAMES',
-    'CATEGORY_GROUPS',
     'STYLE_NAMES',
     'BRAND_CUSTOM_LINKS',
     'WEATHER_TERMS',
@@ -28,32 +25,34 @@ CONSTANT_NAMES = {
 }
 
 CATEGORY_NAMES = {
-    'FILES': 'files',
-    'GENERAL': 'general',
-    'MUSIC': 'music',
-    'SOCIAL_MEDIA': 'social media',
-    'IMAGES': 'images',
-    'VIDEOS': 'videos',
-    'RADIO': 'radio',
-    'TV': 'tv',
-    'IT': 'it',
-    'NEWS': 'news',
-    'MAP': 'map',
-    'ONIONS': 'onions',
-    'SCIENCE': 'science',
-}
-
-CATEGORY_GROUPS = {
-    # non-tab categories
-    'APPS': 'apps',
-    'DICTIONARIES': 'dictionaries',
-    'LYRICS': 'lyrics',
-    'PACKAGES': 'packages',
-    'Q_A': 'q&a',
-    'REPOS': 'repos',
-    'SOFTWARE_WIKIS': 'software wikis',
-    'WEB': 'web',
-    'SCIENTIFIC PUBLICATIONS': 'scientific publications',
+    "APPS": "apps",
+    "BLOGS": "blogs",
+    "DICTIONARIES": "dictionaries",
+    "FILES": "files",
+    "GENERAL": "general",
+    "ICONS": "icons",
+    "IMAGES": "images",
+    "IT": "it",
+    "LYRICS": "lyrics",
+    "MAP": "map",
+    "MOVIES": "movies",
+    "MUSIC": "music",
+    "NEWS": "news",
+    "ONIONS": "onions",
+    "PACKAGES": "packages",
+    "Q_A": "q&a",
+    "RADIO": "radio",
+    "REPOS": "repos",
+    "SCIENCE": "science",
+    "SCIENTIFIC PUBLICATIONS": "scientific publications",
+    "SOCIAL_MEDIA": "social media",
+    "SOFTWARE_WIKIS": "software wikis",
+    "STOCK_IMAGES": "stock images",
+    "TRANSLATE": "translate",
+    "TV": "tv",
+    "VIDEOS": "videos",
+    "WEATHER": "weather",
+    "WEB": "web",
 }
 
 STYLE_NAMES = {

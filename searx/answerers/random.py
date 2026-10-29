@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # pylint: disable=missing-module-docstring
 
-from __future__ import annotations
 
 import hashlib
 import random
@@ -17,7 +16,7 @@ from . import Answerer, AnswererInfo
 
 def random_characters():
     random_string_letters = string.ascii_lowercase + string.digits + string.ascii_uppercase
-    return [random.choice(random_string_letters) for _ in range(random.randint(8, 32))]
+    return random.choices(random_string_letters, k=random.randint(8, 32))
 
 
 def random_string():

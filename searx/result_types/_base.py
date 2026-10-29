@@ -16,29 +16,31 @@
    :members:
 """
 
-
-from __future__ import annotations
-
 __all__ = ["Result"]
+
+import typing as t
+import types
 
 import re
 import urllib.parse
 import warnings
-import typing
-import time
 import datetime
 
 from collections.abc import Callable
 
 import msgspec
 
-from searx import logger as log
+from searx import logger
+
+log = logger.getChild("result_types")
 
 WHITESPACE_REGEX = re.compile('( |\t|\n)+', re.M | re.U)
-UNKNOWN = object()
+MAXIMUM_TITLE_LENGTH_CHARS = 200
+MAXIMUM_CONTENT_LENGTH_CHARS = 1200
+UNSET = object()
 
 
-def _normalize_url_fields(result: Result | LegacyResult):
+def _normalize_url_fields(result: "Result | LegacyResult"):
 
     # As soon we need LegacyResult not any longer, we can move this function to
     # method Result.normalize_result_fields
@@ -52,6 +54,12 @@ def _normalize_url_fields(result: Result | LegacyResult):
             result.parsed_url = urllib.parse.urlparse(result.url)
 
     if result.parsed_url:
+        # properly format special characters (e.g. "ä", "ö") in IDN domains
+        # e.g. "xn--strung-xxa.de" becomes "störung.de"
+        if result.parsed_url.netloc.startswith("xn--"):
+            netloc = result.parsed_url.netloc.encode().decode("idna")
+            result.parsed_url = result.parsed_url._replace(netloc=netloc)
+
         result.parsed_url = result.parsed_url._replace(
             # if the result has no scheme, use http as default
             scheme=result.parsed_url.scheme or "http",
@@ -75,7 +83,7 @@ def _normalize_url_fields(result: Result | LegacyResult):
                 path=_url.path,
             ).geturl()
 
-        infobox_id = getattr(result, "id", None)
+        infobox_id: str | None = getattr(result, "id", None)
         if infobox_id:
             _url = urllib.parse.urlparse(infobox_id)
             result.id = _url._replace(
@@ -85,7 +93,22 @@ def _normalize_url_fields(result: Result | LegacyResult):
             ).geturl()
 
 
-def _normalize_text_fields(result: MainResult | LegacyResult):
+def _normalize_text_field(text: str, field_name: str, max_length: int) -> str:
+    if text and not isinstance(text, str):
+        text = str(text)
+        log.debug("result: invalid type of field '%s': %s", field_name, text)
+
+    text = WHITESPACE_REGEX.sub(" ", text).strip()
+
+    # truncate too long result titles and contents
+    if text and len(text) > max_length:
+        # don't split at characters, but at full words instead
+        # e.g. _truncate_text("hello world", 9) yields "hello" instead of "hello wor"
+        text = text[:max_length].rsplit(" ", 1)[0] + " …"
+    return text
+
+
+def _normalize_text_fields(result: "MainResult | LegacyResult"):
 
     # As soon we need LegacyResult not any longer, we can move this function to
     # method MainResult.normalize_result_fields
@@ -94,24 +117,17 @@ def _normalize_text_fields(result: MainResult | LegacyResult):
     # implemented correctly. Historically, however, we have always had a type
     # check here.
 
-    if result.title and not isinstance(result.title, str):
-        log.debug("result: invalid type of field 'title': %s", str(result))
-        result.title = str(result)
-    if result.content and not isinstance(result.content, str):
-        log.debug("result: invalid type of field 'content': %s", str(result))
-        result.content = str(result)
+    result.title = _normalize_text_field(result.title, "title", MAXIMUM_TITLE_LENGTH_CHARS)
+    result.content = _normalize_text_field(result.content, "content", MAXIMUM_CONTENT_LENGTH_CHARS)
 
-    # normalize title and content
-    if result.title:
-        result.title = WHITESPACE_REGEX.sub(" ", result.title).strip()
-    if result.content:
-        result.content = WHITESPACE_REGEX.sub(" ", result.content).strip()
     if result.content == result.title:
         # avoid duplicate content between the content and title fields
         result.content = ""
 
 
-def _filter_urls(result: Result | LegacyResult, filter_func: Callable[[Result | LegacyResult, str, str], str | bool]):
+def _filter_urls(
+    result: "Result | LegacyResult", filter_func: "Callable[[Result | LegacyResult, str, str], str | bool]"
+):
     # pylint: disable=too-many-branches, too-many-statements
 
     # As soon we need LegacyResult not any longer, we can move this function to
@@ -119,13 +135,27 @@ def _filter_urls(result: Result | LegacyResult, filter_func: Callable[[Result | 
 
     url_fields = ["url", "iframe_src", "audio_src", "img_src", "thumbnail_src", "thumbnail"]
 
+    url_src: str
+
     for field_name in url_fields:
         url_src = getattr(result, field_name, "")
         if not url_src:
             continue
 
-        new_url = filter_func(result, field_name, url_src)
-        # log.debug("filter_urls: filter_func(result, %s) '%s' -> '%s'", field_name, field_value, new_url)
+        try:
+            new_url = filter_func(result, field_name, url_src)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # pylint: disable=no-member
+            _tb: types.TracebackType = exc.__traceback__.tb_next.tb_next  # type: ignore
+            log.error(
+                "filter_urls (field '%s'): ignore %s from callback %s:%s",
+                field_name,
+                repr(exc),
+                _tb.tb_frame.f_code.co_filename,
+                _tb.tb_lineno,
+            )
+            continue
+
         if isinstance(new_url, bool):
             if new_url:
                 # log.debug("filter_urls: unchanged field %s URL %s", field_name, field_value)
@@ -155,7 +185,7 @@ def _filter_urls(result: Result | LegacyResult, filter_func: Callable[[Result | 
         new_infobox_urls: list[dict[str, str]] = []
 
         for item in infobox_urls:
-            url_src = item.get("url")
+            url_src = item.get("url", "")
             if not url_src:
                 new_infobox_urls.append(item)
                 continue
@@ -179,14 +209,14 @@ def _filter_urls(result: Result | LegacyResult, filter_func: Callable[[Result | 
     #
     # The infobox has additional subsections for attributes, urls and relatedTopics:
 
-    infobox_attributes: list[dict[str, dict]] = getattr(result, "attributes", [])
+    infobox_attributes: list[dict[str, t.Any]] = getattr(result, "attributes", [])
 
     if infobox_attributes:
         # log.debug("filter_urls: infobox_attributes .. %s", infobox_attributes)
-        new_infobox_attributes: list[dict[str, dict]] = []
+        new_infobox_attributes: list[dict[str, str | list[dict[str, str]]]] = []
 
         for item in infobox_attributes:
-            image = item.get("image", {})
+            image: dict[str, str] = item.get("image", {})
             url_src = image.get("src", "")
             if not url_src:
                 new_infobox_attributes.append(item)
@@ -215,7 +245,7 @@ def _filter_urls(result: Result | LegacyResult, filter_func: Callable[[Result | 
     result.normalize_result_fields()
 
 
-def _normalize_date_fields(result: MainResult | LegacyResult):
+def _normalize_date_fields(result: "MainResult | LegacyResult"):
 
     if result.publishedDate:  # do not try to get a date from an empty string or a None type
         try:  # test if publishedDate >= 1900 (datetime module bug)
@@ -229,13 +259,6 @@ class Result(msgspec.Struct, kw_only=True):
 
     url: str | None = None
     """A link related to this *result*"""
-
-    template: str = "default.html"
-    """Name of the template used to render the result.
-
-    By default :origin:`result_templates/default.html
-    <searx/templates/simple/result_templates/default.html>` is used.
-    """
 
     engine: str | None = ""
     """Name of the engine *this* result comes from.  In case of *plugins* a
@@ -264,7 +287,7 @@ class Result(msgspec.Struct, kw_only=True):
     def __post_init__(self):
         pass
 
-    def filter_urls(self, filter_func: Callable[[Result | LegacyResult, str, str], str | bool]):
+    def filter_urls(self, filter_func: "Callable[[Result | LegacyResult, str, str], str | bool]"):
         """A filter function is passed in the ``filter_func`` argument to
         filter and/or modify the URLs.
 
@@ -304,7 +327,7 @@ class Result(msgspec.Struct, kw_only=True):
         """
         return id(self)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object):
         """py:obj:`Result` objects are equal if the hash values of the two
         objects are equal.  If needed, its recommended to overwrite
         "py:obj:`Result.__hash__`."""
@@ -313,11 +336,11 @@ class Result(msgspec.Struct, kw_only=True):
 
     # for legacy code where a result is treated as a Python dict
 
-    def __setitem__(self, field_name, value):
+    def __setitem__(self, field_name: str, value: t.Any):
 
         return setattr(self, field_name, value)
 
-    def __getitem__(self, field_name):
+    def __getitem__(self, field_name: str) -> t.Any:
 
         if field_name not in self.__struct_fields__:
             raise KeyError(f"{field_name}")
@@ -330,19 +353,27 @@ class Result(msgspec.Struct, kw_only=True):
     def as_dict(self):
         return {f: getattr(self, f) for f in self.__struct_fields__}
 
-    def defaults_from(self, other: Result):
+    def defaults_from(self, other: "Result"):
         """Fields not set in *self* will be updated from the field values of the
-        *other*.
+        *other*.  If a field is set (exists) but contains an empty string
+        or the value ``None``, it is also considered *not set*.
         """
         for field_name in self.__struct_fields__:
-            self_val = getattr(self, field_name, False)
-            other_val = getattr(other, field_name, False)
-            if self_val:
+            self_val = getattr(self, field_name, UNSET)
+            other_val = getattr(other, field_name, UNSET)
+            if self_val is UNSET and other_val not in (UNSET, "", None):
                 setattr(self, field_name, other_val)
 
 
 class MainResult(Result):  # pylint: disable=missing-class-docstring
     """Base class of all result types displayed in :ref:`area main results`."""
+
+    template: str = "default.html"
+    """Name of the template used to render the result.
+
+    By default :origin:`result_templates/default.html
+    <searx/templates/simple/result_templates/default.html>` is used.
+    """
 
     title: str = ""
     """Link title of the result item."""
@@ -353,6 +384,16 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
     img_src: str = ""
     """URL of a image that is displayed in the result item."""
 
+    iframe_src: str = ""
+    """URL of an embedded ``<iframe>`` / the frame is collapsible.
+
+    To convert a standard video URL from a widely know video services into its
+    embed format, have a look at :obj:`searx.utils.get_embedded_stream_url`.
+    """
+
+    audio_src: str = ""
+    """URL of an embedded ``<audio controls>``."""
+
     thumbnail: str = ""
     """URL of a thumbnail that is displayed in the result item."""
 
@@ -360,9 +401,13 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
     """The date on which the object was published."""
 
     pubdate: str = ""
-    """String representation of :py:obj:`MainResult.publishedDate`"""
+    """String representation of :py:obj:`MainResult.publishedDate`
 
-    length: time.struct_time | None = None
+    Deprecated: it is still partially used in the templates, but will one day be
+    completely eliminated.
+    """
+
+    length: datetime.timedelta | None = None
     """Playing duration in seconds."""
 
     views: str = ""
@@ -374,7 +419,8 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
     metadata: str = ""
     """Miscellaneous metadata."""
 
-    priority: typing.Literal["", "high", "low"] = ""
+    PriorityType = t.Literal["", "high", "low"]  # pyright: ignore[reportUnannotatedClassAttribute]
+    priority: "MainResult.PriorityType" = ""
     """The priority can be set via :ref:`hostnames plugin`, for example."""
 
     engines: set[str] = set()
@@ -412,7 +458,7 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
             self.engines.add(self.engine)
 
 
-class LegacyResult(dict):
+class LegacyResult(dict[str, t.Any]):
     """A wrapper around a legacy result item.  The SearXNG core uses this class
     for untyped dictionaries / to be downward compatible.
 
@@ -428,8 +474,6 @@ class LegacyResult(dict):
        Do not use this class in your own implementations!
     """
 
-    UNSET = object()
-
     # emulate field types from type class Result
     url: str | None
     template: str
@@ -441,13 +485,14 @@ class LegacyResult(dict):
     content: str
     img_src: str
     thumbnail: str
-    priority: typing.Literal["", "high", "low"]
+    priority: t.Literal["", "high", "low"]
     engines: set[str]
     positions: list[int]
     score: float
     category: str
     publishedDate: datetime.datetime | None
     pubdate: str = ""
+    iframe_src: str | None
 
     # infobox result
     urls: list[dict[str, str]]
@@ -456,7 +501,7 @@ class LegacyResult(dict):
     def as_dict(self):
         return self
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: t.Any, **kwargs: t.Any):
 
         super().__init__(*args, **kwargs)
 
@@ -477,6 +522,7 @@ class LegacyResult(dict):
         self["score"] = self.get("score", 0)
         self["category"] = self.get("category", "")
         self["publishedDate"] = self.get("publishedDate")
+        self["iframe_src"] = self.get("iframe_src")
 
         if "infobox" in self:
             self["urls"] = self.get("urls", [])
@@ -499,15 +545,15 @@ class LegacyResult(dict):
                 DeprecationWarning,
             )
 
-    def __getattr__(self, name: str, default=UNSET) -> typing.Any:
-        if default == self.UNSET and name not in self:
+    def __getattr__(self, name: str, default: t.Any = UNSET) -> t.Any:
+        if default == UNSET and name not in self:
             raise AttributeError(f"LegacyResult object has no field named: {name}")
         return self[name]
 
-    def __setattr__(self, name: str, val):
+    def __setattr__(self, name: str, val: t.Any):
         self[name] = val
 
-    def __hash__(self) -> int:  # type: ignore
+    def __hash__(self) -> int:  # pyright: ignore[reportIncompatibleVariableOverride]
 
         if "answer" in self:
             # deprecated ..
@@ -518,7 +564,7 @@ class LegacyResult(dict):
             # the img_src are equal.
             return hash(f"{self.template}|{self.url}|{self.img_src}")
 
-        if not any(cls in self for cls in ["suggestion", "correction", "infobox", "number_of_results", "engine_data"]):
+        if not any(cls in self for cls in ["suggestion", "correction", "infobox", "engine_data"]):
             # Ordinary url-results are equal if their values for template,
             # parsed_url (without schema) and img_src` are equal.
 
@@ -535,7 +581,7 @@ class LegacyResult(dict):
 
         return id(self)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object):
 
         return hash(self) == hash(other)
 
@@ -550,11 +596,14 @@ class LegacyResult(dict):
         if self.engine:
             self.engines.add(self.engine)
 
-    def defaults_from(self, other: LegacyResult):
-        for k, v in other.items():
-            if not self.get(k):
-                self[k] = v
+    def defaults_from(self, other: "LegacyResult"):
+        # If a field is set (exists) but contains an empty string or the value
+        # ``None``, it is also considered *not set*.
+        for field_name, other_val in other.items():
+            self_val = self.get(field_name, UNSET)
+            if self_val is UNSET and other_val not in ("", UNSET):
+                self[field_name] = other_val
 
-    def filter_urls(self, filter_func: Callable[[Result | LegacyResult, str, str], str | bool]):
+    def filter_urls(self, filter_func: "Callable[[Result | LegacyResult, str, str], str | bool]"):
         """See :py:obj:`Result.filter_urls`"""
         _filter_urls(self, filter_func=filter_func)

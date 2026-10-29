@@ -17,10 +17,11 @@ about = {
 # Engine configuration
 paging = True
 categories = ['images']
+remove_ai_images = False
 
 # Search URL
 base_url = "https://www.pixiv.net/ajax/search/illustrations"
-pixiv_image_proxies: list = []
+pixiv_image_proxies: list[str] = []
 
 
 def request(query, params):
@@ -33,6 +34,9 @@ def request(query, params):
         "type": "illust_and_ugoira",
         "lang": "en",
     }
+
+    if remove_ai_images is True:
+        query_params.update({"ai_type": 1})
 
     params["url"] = f"{base_url}/{query}?{urlencode(query_params)}"
 

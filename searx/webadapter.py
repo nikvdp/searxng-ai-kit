@@ -7,9 +7,8 @@ from searx.exceptions import SearxParameterException
 from searx.webutils import VALID_LANGUAGE_CODE
 from searx.query import RawTextQuery
 from searx.engines import categories, engines
-from searx.search import SearchQuery, EngineRef
-from searx.preferences import Preferences, is_locked
-from searx.utils import detect_language
+from searx.search.models import SearchQuery, EngineRef
+from searx.preferences import Preferences
 
 
 # remove duplicate queries.
@@ -54,7 +53,7 @@ def parse_pageno(form: Dict[str, str]) -> int:
 
 
 def parse_lang(preferences: Preferences, form: Dict[str, str], raw_text_query: RawTextQuery) -> str:
-    if is_locked('language'):
+    if "language" in preferences.cfg.lock:
         return preferences.get_value('language')
     # get language
     # set specific language if set on request, query or preferences
@@ -74,7 +73,7 @@ def parse_lang(preferences: Preferences, form: Dict[str, str], raw_text_query: R
 
 
 def parse_safesearch(preferences: Preferences, form: Dict[str, str]) -> int:
-    if is_locked('safesearch'):
+    if "safesearch" in preferences.cfg.lock:
         return preferences.get_value('safesearch')
 
     if 'safesearch' in form:
@@ -136,7 +135,7 @@ def parse_category_form(query_categories: List[str], name: str, value: str) -> N
 def get_selected_categories(preferences: Preferences, form: Optional[Dict[str, str]]) -> List[str]:
     selected_categories = []
 
-    if not is_locked('categories') and form is not None:
+    if not "categories" in preferences.cfg.lock and form is not None:
         for name, value in form.items():
             parse_category_form(selected_categories, name, value)
 
@@ -176,7 +175,7 @@ def parse_generic(preferences: Preferences, form: Dict[str, str], disabled_engin
 
     # set categories/engines
     explicit_engine_list = False
-    if not is_locked('categories'):
+    if not "categories" in preferences.cfg.lock:
         # parse the form only if the categories are not locked
         for pd_name, pd in form.items():  # pylint: disable=invalid-name
             if pd_name == 'engines':
@@ -233,9 +232,7 @@ def get_search_query_from_webapp(
     4. string with the *selected locale* of the query
 
     About language/locale: if the client selects the alias ``auto`` the
-    ``SearchQuery`` object is build up by the :py:obj:`detected language
-    <searx.utils.detect_language>`.  If language recognition does not have a
-    match the language preferred by the :py:obj:`Preferences.client` is used.
+    language preferred by the :py:obj:`Preferences.client` is used.
     If client does not have a preference, the default ``all`` is used.
 
     The *selected locale* in the tuple always represents the selected
@@ -267,10 +264,9 @@ def get_search_query_from_webapp(
     selected_locale = query_lang
 
     if query_lang == 'auto':
-        query_lang = detect_language(query, threshold=0.8, only_search_languages=True)
-        query_lang = query_lang or preferences.client.locale_tag or 'all'
+        query_lang = preferences.client.locale_tag or 'all'
 
-    if not is_locked('categories') and raw_text_query.specific:
+    if not "categories" in preferences.cfg.lock and raw_text_query.specific:
         # if engines are calculated from query,
         # set categories by using that information
         query_engineref_list = raw_text_query.enginerefs

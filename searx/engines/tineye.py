@@ -14,17 +14,11 @@ billion images `[tineye.com] <https://tineye.com/how>`_.
 
 """
 
-from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 from datetime import datetime
 from flask_babel import gettext
 
 from searx.result_types import EngineResults
-
-if TYPE_CHECKING:
-    import logging
-
-    logger = logging.getLogger()
 
 about = {
     "website": 'https://tineye.com',
@@ -79,7 +73,6 @@ def request(query, params):
     params['headers'].update(
         {
             'Connection': 'keep-alive',
-            'Accept-Encoding': 'gzip, defalte, br',
             'Host': 'tineye.com',
             'DNT': '1',
             'TE': 'trailers',
@@ -128,7 +121,7 @@ def parse_tineye_match(match_json):
 
             crawl_date = backlink_json.get("crawl_date")
             if crawl_date:
-                crawl_date = datetime.strptime(crawl_date, '%Y-%m-%d')
+                crawl_date = datetime.fromisoformat(crawl_date)
             else:
                 crawl_date = datetime.min
 
@@ -217,9 +210,5 @@ def response(resp) -> EngineResults:
         )
 
     # append number of results
-
-    number_of_results = json_data.get('num_matches')
-    if number_of_results:
-        results.append({'number_of_results': number_of_results})
 
     return results

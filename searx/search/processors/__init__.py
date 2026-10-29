@@ -1,82 +1,107 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-
-"""Implement request processors used by engine-types.
-
-"""
+"""Implement request processors used by engine-types."""
 
 __all__ = [
-    'EngineProcessor',
-    'OfflineProcessor',
-    'OnlineProcessor',
-    'OnlineDictionaryProcessor',
-    'OnlineCurrencyProcessor',
-    'OnlineUrlSearchProcessor',
-    'PROCESSORS',
+    "OfflineParamTypes",
+    "OnlineCurrenciesParams",
+    "OnlineDictParams",
+    "OnlineParamTypes",
+    "OnlineParams",
+    "OnlineUrlSearchParams",
+    "PROCESSORS",
+    "ParamTypes",
+    "RequestParams",
+    "ProcessorType",
 ]
 
-import threading
-from typing import Dict
+import typing as t
 
+import os
 from searx import logger
 from searx import engines
 
-from .online import OnlineProcessor
+from .abstract import EngineProcessor, RequestParams
 from .offline import OfflineProcessor
-from .online_dictionary import OnlineDictionaryProcessor
-from .online_currency import OnlineCurrencyProcessor
-from .online_url_search import OnlineUrlSearchProcessor
-from .abstract import EngineProcessor
+from .online import OnlineProcessor, OnlineParams
+from .online_dictionary import OnlineDictionaryProcessor, OnlineDictParams
+from .online_currency import OnlineCurrencyProcessor, OnlineCurrenciesParams
+from .online_url_search import OnlineUrlSearchProcessor, OnlineUrlSearchParams
 
-logger = logger.getChild('search.processors')
-PROCESSORS: Dict[str, EngineProcessor] = {}
-"""Cache request processors, stored by *engine-name* (:py:func:`initialize`)
+logger = logger.getChild("search.processors")
+
+ProcessorType = t.Literal[
+    "offline",
+    "online",
+    "online_currency",
+    "online_dictionary",
+    "online_url_search",
+]
+
+OnlineParamTypes: t.TypeAlias = OnlineParams | OnlineDictParams | OnlineCurrenciesParams | OnlineUrlSearchParams
+OfflineParamTypes: t.TypeAlias = RequestParams
+ParamTypes: t.TypeAlias = OfflineParamTypes | OnlineParamTypes
+
+
+class ProcessorMap(dict[str, EngineProcessor]):
+    """Class to manage :py:obj:`EngineProcessor` instances in a key/value map
+    (instances stored by *engine-name*)."""
+
+    processor_types: dict[str, type[EngineProcessor]] = {
+        OnlineProcessor.engine_type: OnlineProcessor,
+        OfflineProcessor.engine_type: OfflineProcessor,
+        OnlineDictionaryProcessor.engine_type: OnlineDictionaryProcessor,
+        OnlineCurrencyProcessor.engine_type: OnlineCurrencyProcessor,
+        OnlineUrlSearchProcessor.engine_type: OnlineUrlSearchProcessor,
+    }
+
+    def init(self, engine_list: list[dict[str, t.Any]]):
+        """Initialize all engines and registers a processor for each engine."""
+
+        for eng_settings in engine_list:
+            eng_name: str = eng_settings["name"]
+
+            if eng_settings.get("inactive", False) is True:
+                continue
+
+            eng_obj = engines.engines.get(eng_name)
+            if eng_obj is None:
+                logger.warning("Engine of name '%s' does not exists.", eng_name)
+                continue
+
+            eng_type = getattr(eng_obj, "engine_type", "online")
+            proc_cls = self.processor_types.get(eng_type)
+            if proc_cls is None:
+                logger.error("Engine of name '%s' is of unknown engine_type: %s", eng_name, eng_type)
+                continue
+
+            # initialize (and register) the engine
+            eng_proc = proc_cls(eng_obj)
+            eng_proc.initialize(self.register_processor)
+
+    def register_processor(self, eng_proc: EngineProcessor, eng_proc_ok: bool) -> bool:
+        """Register the :py:obj:`EngineProcessor`.
+
+        This method is usually passed as a callback to the initialization of the
+        :py:obj:`EngineProcessor`.
+
+        The value (true/false) passed in ``eng_proc_ok`` indicates whether the
+        initialization of the :py:obj:`EngineProcessor` was successful; if this
+        is not the case, the processor is not registered.
+        """
+
+        if eng_proc_ok:
+            self[eng_proc.engine.name] = eng_proc
+            # logger.debug("registered engine processor: %s", eng_proc.engine.name)
+        else:
+            logger.error(
+                "(PID %s) %s: can't register engines processor (init engine failed)", os.getpid(), eng_proc.engine.name
+            )
+
+        return eng_proc_ok
+
+
+PROCESSORS = ProcessorMap()
+"""Global :py:obj:`ProcessorMap`.
 
 :meta hide-value:
 """
-
-
-def get_processor_class(engine_type):
-    """Return processor class according to the ``engine_type``"""
-    for c in [
-        OnlineProcessor,
-        OfflineProcessor,
-        OnlineDictionaryProcessor,
-        OnlineCurrencyProcessor,
-        OnlineUrlSearchProcessor,
-    ]:
-        if c.engine_type == engine_type:
-            return c
-    return None
-
-
-def get_processor(engine, engine_name):
-    """Return processor instance that fits to ``engine.engine.type``)"""
-    engine_type = getattr(engine, 'engine_type', 'online')
-    processor_class = get_processor_class(engine_type)
-    if processor_class:
-        return processor_class(engine, engine_name)
-    return None
-
-
-def initialize_processor(processor):
-    """Initialize one processor
-
-    Call the init function of the engine
-    """
-    if processor.has_initialize_function:
-        t = threading.Thread(target=processor.initialize, daemon=True)
-        t.start()
-
-
-def initialize(engine_list):
-    """Initialize all engines and store a processor for each engine in :py:obj:`PROCESSORS`."""
-    for engine_data in engine_list:
-        engine_name = engine_data['name']
-        engine = engines.engines.get(engine_name)
-        if engine:
-            processor = get_processor(engine, engine_name)
-            initialize_processor(processor)
-            if processor is None:
-                engine.logger.error('Error get processor for engine %s', engine_name)
-            else:
-                PROCESSORS[engine_name] = processor

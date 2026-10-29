@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Google Play Apps & Google Play Movies
-"""
+"""Google Play Apps & Google Play Movies"""
 
 from urllib.parse import urlencode
-from lxml import html
 from searx.utils import (
     eval_xpath,
     extract_url,
@@ -20,9 +18,8 @@ about = {
     "results": "HTML",
 }
 
-send_accept_language_header = True
-
 play_categ = None  # apps|movies
+enable_http3 = True
 base_url = 'https://play.google.com'
 search_url = base_url + "/store/search?{query}&c={play_categ}"
 
@@ -54,7 +51,7 @@ def response(resp):
 def response_movies(resp):
 
     results = []
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
 
     for section in eval_xpath(dom, '//c-wiz/section/header/..'):
         sec_name = extract_text(eval_xpath(section, './header'))
@@ -81,7 +78,7 @@ def response_movies(resp):
 def response_apps(resp):
 
     results = []
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
 
     if eval_xpath(dom, '//div[@class="v6DsQb"]'):
         return []

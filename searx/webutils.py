@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # pylint: disable=missing-module-docstring, invalid-name
 
-from __future__ import annotations
 
 import os
 import pathlib
@@ -17,6 +16,7 @@ from typing import Iterable, List, Tuple, TYPE_CHECKING
 from io import StringIO
 from codecs import getincrementalencoder
 
+import msgspec
 from flask_babel import gettext, format_date  # type: ignore
 
 from searx import logger, get_setting
@@ -42,18 +42,17 @@ exception_classname_to_text = {
     None: gettext('unexpected crash'),
     'timeout': timeout_text,
     'asyncio.TimeoutError': timeout_text,
-    'httpx.TimeoutException': timeout_text,
-    'httpx.ConnectTimeout': timeout_text,
-    'httpx.ReadTimeout': timeout_text,
-    'httpx.WriteTimeout': timeout_text,
-    'httpx.HTTPStatusError': gettext('HTTP error'),
-    'httpx.ConnectError': gettext("HTTP connection error"),
-    'httpx.RemoteProtocolError': http_protocol_error_text,
-    'httpx.LocalProtocolError': http_protocol_error_text,
-    'httpx.ProtocolError': http_protocol_error_text,
-    'httpx.ReadError': network_error_text,
-    'httpx.WriteError': network_error_text,
-    'httpx.ProxyError': gettext("proxy error"),
+    'curl_cffi.requests.exceptions.Timeout': timeout_text,
+    'curl_cffi.requests.exceptions.ConnectTimeout': timeout_text,
+    'curl_cffi.requests.exceptions.ReadTimeout': timeout_text,
+    'curl_cffi.requests.exceptions.HTTPError': gettext('HTTP error'),
+    'curl_cffi.requests.exceptions.ConnectionError': gettext("HTTP connection error"),
+    'curl_cffi.requests.exceptions.DNSError': gettext("HTTP connection error"),
+    'curl_cffi.requests.exceptions.IncompleteRead': http_protocol_error_text,
+    'curl_cffi.requests.exceptions.SSLError': ssl_cert_error_text,
+    'curl_cffi.requests.exceptions.CertificateVerifyError': ssl_cert_error_text,
+    'curl_cffi.requests.exceptions.ProxyError': gettext("proxy error"),
+    'curl_cffi.requests.exceptions.RequestException': network_error_text,
     'searx.exceptions.SearxEngineCaptchaException': gettext("CAPTCHA"),
     'searx.exceptions.SearxEngineTooManyRequestsException': gettext("too many requests"),
     'searx.exceptions.SearxEngineAccessDeniedException': gettext("access denied"),
@@ -67,7 +66,7 @@ exception_classname_to_text = {
 }
 
 
-def get_translated_errors(unresponsive_engines: Iterable[UnresponsiveEngine]):
+def get_translated_errors(unresponsive_engines: "Iterable[UnresponsiveEngine]"):
     translated_errors = []
 
     for unresponsive_engine in unresponsive_engines:
@@ -110,7 +109,7 @@ class CSVWriter:
             self.writerow(row)
 
 
-def write_csv_response(csv: CSVWriter, rc: ResultContainer) -> None:  # pylint: disable=redefined-outer-name
+def write_csv_response(csv: CSVWriter, rc: "ResultContainer") -> None:  # pylint: disable=redefined-outer-name
     """Write rows of the results to a query (``application/csv``) into a CSV
     table (:py:obj:`CSVWriter`).  First line in the table contain the column
     names.  The column "type" specifies the type, the following types are
@@ -148,6 +147,8 @@ def write_csv_response(csv: CSVWriter, rc: ResultContainer) -> None:  # pylint: 
 
 class JSONEncoder(json.JSONEncoder):  # pylint: disable=missing-class-docstring
     def default(self, o):
+        if isinstance(o, msgspec.Struct):
+            return msgspec.to_builtins(o)
         if isinstance(o, datetime):
             return o.isoformat()
         if isinstance(o, timedelta):
@@ -157,11 +158,10 @@ class JSONEncoder(json.JSONEncoder):  # pylint: disable=missing-class-docstring
         return super().default(o)
 
 
-def get_json_response(sq: SearchQuery, rc: ResultContainer) -> str:
+def get_json_response(sq: "SearchQuery", rc: "ResultContainer") -> str:
     """Returns the JSON string of the results to a query (``application/json``)"""
     data = {
         'query': sq.query,
-        'number_of_results': rc.number_of_results,
         'results': [_.as_dict() for _ in rc.get_ordered_results()],
         'answers': [_.as_dict() for _ in rc.answers],
         'corrections': list(rc.corrections),
@@ -311,7 +311,7 @@ def searxng_l10n_timespan(dt: datetime) -> str:  # pylint: disable=invalid-name
 NO_SUBGROUPING = 'without further subgrouping'
 
 
-def group_engines_in_tab(engines: Iterable[Engine]) -> List[Tuple[str, Iterable[Engine]]]:
+def group_engines_in_tab(engines: "Iterable[Engine]") -> List[Tuple[str, "Iterable[Engine]"]]:
     """Groups an Iterable of engines by their first non tab category (first subgroup)"""
 
     def get_subgroup(eng):
@@ -322,7 +322,7 @@ def group_engines_in_tab(engines: Iterable[Engine]) -> List[Tuple[str, Iterable[
         return (group[0] == NO_SUBGROUPING, group[0].lower())
 
     def engine_sort_key(engine):
-        return (engine.about.get('language', ''), engine.name)
+        return (engine.language, engine.name)
 
     tabs = list(get_setting('categories_as_tabs').keys())
     subgroups = itertools.groupby(sorted(engines, key=get_subgroup), get_subgroup)

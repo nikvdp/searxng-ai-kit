@@ -7,8 +7,8 @@ No public instance offer a public API now
 - https://github.com/searxng/searxng/issues/2722#issuecomment-2884993248
 
 """
-from __future__ import annotations
 
+import typing as t
 import time
 import random
 from urllib.parse import quote_plus, urlparse
@@ -32,10 +32,10 @@ paging = True
 time_range_support = True
 
 # base_url can be overwritten by a list of URLs in the settings.yml
-base_url: list | str = []
+base_url: list[str] | str = []
 
 
-def init(_):
+def setup(_: dict[str, t.Any]) -> bool | None:
     if not base_url:
         raise ValueError("missing invidious base_url")
 

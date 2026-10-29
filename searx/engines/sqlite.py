@@ -44,7 +44,8 @@ Implementations
 ===============
 
 """
-import typing
+
+import typing as t
 import sqlite3
 import contextlib
 
@@ -59,14 +60,14 @@ database = ""
 query_str = ""
 """SQL query that returns the result items."""
 
-result_type: typing.Literal["MainResult", "KeyValue"] = "KeyValue"
+result_type: t.Literal["MainResult", "KeyValue"] = "KeyValue"
 """The result type can be :py:obj:`MainResult` or :py:obj:`KeyValue`."""
 
 limit = 10
 paging = True
 
 
-def init(engine_settings):
+def setup(engine_settings: dict[str, t.Any]) -> bool | None:
     if 'query_str' not in engine_settings:
         raise ValueError('query_str cannot be empty')
 

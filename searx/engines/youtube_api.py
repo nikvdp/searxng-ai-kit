@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- Youtube (Videos)
+Youtube (Videos)
 """
 
 from json import loads
@@ -22,6 +22,7 @@ about = {
 # engine dependent config
 categories = ['videos', 'music']
 paging = False
+enable_http3 = True
 api_key = None
 
 # search-url

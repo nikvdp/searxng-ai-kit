@@ -12,7 +12,9 @@ Configuration
 =============
 
 The :py:obj:`backend_url` and :py:obj:`frontend_url` has to be set in the engine
-named `piped` and are used by all piped engines
+named `piped` and are used by all ``piped`` engines (unless an individual values
+for ``backend_url`` and ``frontend_url`` are configured for the engine).
+
 
 .. code:: yaml
 
@@ -38,14 +40,13 @@ Known Quirks
 The implementation to support :py:obj:`paging <searx.enginelib.Engine.paging>`
 is based on the *nextpage* method of Piped's REST API / the :py:obj:`frontend
 API <frontend_url>`.  This feature is *next page driven* and plays well with the
-:ref:`infinite_scroll <settings ui>` setting in SearXNG but it does not really
-fit into SearXNG's UI to select a page by number.
+:ref:`infinite_scroll <settings plugins>` plugin in SearXNG but it does not
+really fit into SearXNG's UI to select a page by number.
 
 Implementations
 ===============
-"""
 
-from __future__ import annotations
+"""
 
 import time
 import random
@@ -70,7 +71,7 @@ categories = []
 paging = True
 
 # search-url
-backend_url: list | str = "https://pipedapi.kavin.rocks"
+backend_url: list[str] | str = []
 """Piped-Backend_: The core component behind Piped.  The value is an URL or a
 list of URLs.  In the latter case instance will be selected randomly.  For a
 complete list of official instances see Piped-Instances (`JSON
@@ -81,7 +82,7 @@ complete list of official instances see Piped-Instances (`JSON
 
 """
 
-frontend_url: str = "https://piped.video"
+frontend_url: str | None = None
 """Piped-Frontend_: URL to use as link and for embeds.
 
 .. _Piped-Frontend: https://github.com/TeamPiped/Piped
@@ -94,7 +95,7 @@ piped_filter = 'all'
 def _backend_url() -> str:
     from searx.engines import engines  # pylint: disable=import-outside-toplevel
 
-    url = engines['piped'].backend_url  # type: ignore
+    url: list[str] | str = backend_url or engines["piped"].backend_url  # type: ignore
     if isinstance(url, list):
         url = random.choice(url)
     return url
@@ -103,7 +104,7 @@ def _backend_url() -> str:
 def _frontend_url() -> str:
     from searx.engines import engines  # pylint: disable=import-outside-toplevel
 
-    return engines['piped'].frontend_url  # type: ignore
+    return frontend_url or engines["piped"].frontend_url  # type: ignore
 
 
 def request(query, params):

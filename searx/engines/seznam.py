@@ -1,10 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Seznam
-
-"""
+"""Seznam"""
 
 from urllib.parse import urlencode
-from lxml import html
 from searx.network import get
 from searx.exceptions import SearxEngineAccessDeniedException
 from searx.utils import (
@@ -21,16 +18,16 @@ about = {
     "use_official_api": False,
     "require_api_key": False,
     "results": "HTML",
-    "language": "cz",
 }
+language = "cz"
 
 categories = ['general', 'web']
 base_url = 'https://search.seznam.cz/'
 
 
 def request(query, params):
-    response_index = get(base_url, headers=params['headers'], raise_for_httperror=True)
-    dom = html.fromstring(response_index.text)
+    response_index = get(base_url, headers=params['headers'], raise_for_httperror=True, timeout=3)
+    dom = response_index.html()
 
     url_params = {
         'q': query,
@@ -52,7 +49,7 @@ def response(resp):
 
     results = []
 
-    dom = html.fromstring(resp.content.decode())
+    dom = resp.html()
     for result_element in eval_xpath_list(
         dom, '//div[@id="searchpage-root"]//div[@class="Layout--left"]/div[@class="f2c528"]'
     ):

@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """
- Dictzone
+Dictzone
 """
 
 import urllib.parse
-from lxml import html
 
 from searx.utils import eval_xpath, extract_text
 from searx.result_types import EngineResults
@@ -24,7 +23,6 @@ engine_type = 'online_dictionary'
 categories = ['general', 'translate']
 base_url = "https://dictzone.com"
 weight = 100
-https_support = True
 
 
 def request(query, params):  # pylint: disable=unused-argument
@@ -51,7 +49,7 @@ def response(resp) -> EngineResults:
     if not resp.ok:
         return results
 
-    dom = html.fromstring(resp.text)
+    dom = resp.html()
 
     for result in eval_xpath(dom, ".//table[@id='r']//tr"):
 

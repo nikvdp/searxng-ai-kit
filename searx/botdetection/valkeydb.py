@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Providing a Valkey database for the botdetection methods."""
 
-from __future__ import annotations
-
 import valkey
 
 __all__ = ["set_valkey_client", "get_valkey_client"]

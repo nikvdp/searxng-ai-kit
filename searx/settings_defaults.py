@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Implementation of the default settings.
+"""Implementation of the default settings."""
 
-"""
+from __future__ import annotations
 
-import typing
+import typing as t
 import numbers
 import errno
 import os
@@ -11,7 +11,12 @@ import logging
 from base64 import b64decode
 from os.path import dirname, abspath
 
+import msgspec
+
+from typing_extensions import override
+from .brand import SettingsBrand
 from .sxng_locales import sxng_locales
+from ._settings import SettingsPref
 
 searx_dir = abspath(dirname(__file__))
 
@@ -19,7 +24,7 @@ logger = logging.getLogger('searx')
 OUTPUT_FORMATS = ['html', 'csv', 'json', 'rss']
 SXNG_LOCALE_TAGS = ['all', 'auto'] + list(l[0] for l in sxng_locales)
 SIMPLE_STYLE = ('auto', 'light', 'dark', 'black')
-CATEGORIES_AS_TABS = {
+CATEGORIES_AS_TABS: dict[str, dict[str, t.Any]] = {
     'general': {},
     'images': {},
     'videos': {},
@@ -41,35 +46,50 @@ STR_TO_BOOL = {
 }
 _UNDEFINED = object()
 
+# This type definition for SettingsValue.type_definition is incomplete, but it
+# helps to significantly reduce the most common error messages regarding type
+# annotations.
+TypeDefinition: t.TypeAlias = (  # pylint: disable=invalid-name
+    tuple[None, bool, type]
+    | tuple[None, type, type]
+    | tuple[None, type]
+    | tuple[bool, type]
+    | tuple[type, type]
+    | tuple[type]
+    | tuple[str | int, ...]
+)
+
+TypeDefinitionArg: t.TypeAlias = type | TypeDefinition  # pylint: disable=invalid-name
+
 
 class SettingsValue:
     """Check and update a setting value"""
 
     def __init__(
         self,
-        type_definition: typing.Union[None, typing.Any, typing.Tuple[typing.Any]] = None,
-        default: typing.Any = None,
-        environ_name: str = None,
+        type_definition_arg: TypeDefinitionArg,
+        default: t.Any = None,
+        environ_name: str | None = None,
     ):
-        self.type_definition = (
-            type_definition if type_definition is None or isinstance(type_definition, tuple) else (type_definition,)
+        self.type_definition: TypeDefinition = (
+            type_definition_arg if isinstance(type_definition_arg, tuple) else (type_definition_arg,)
         )
-        self.default = default
-        self.environ_name = environ_name
+        self.default: t.Any = default
+        self.environ_name: str | None = environ_name
 
     @property
     def type_definition_repr(self):
-        types_str = [t.__name__ if isinstance(t, type) else repr(t) for t in self.type_definition]
+        types_str = [td.__name__ if isinstance(td, type) else repr(td) for td in self.type_definition]
         return ', '.join(types_str)
 
-    def check_type_definition(self, value: typing.Any) -> None:
+    def check_type_definition(self, value: t.Any) -> None:
         if value in self.type_definition:
             return
         type_list = tuple(t for t in self.type_definition if isinstance(t, type))
         if not isinstance(value, type_list):
             raise ValueError('The value has to be one of these types/values: {}'.format(self.type_definition_repr))
 
-    def __call__(self, value: typing.Any) -> typing.Any:
+    def __call__(self, value: t.Any) -> t.Any:
         if value == _UNDEFINED:
             value = self.default
         # override existing value with environ
@@ -85,7 +105,8 @@ class SettingsValue:
 class SettingSublistValue(SettingsValue):
     """Check the value is a sublist of type definition."""
 
-    def check_type_definition(self, value: typing.Any) -> typing.Any:
+    @override
+    def check_type_definition(self, value: list[t.Any]) -> None:
         if not isinstance(value, list):
             raise ValueError('The value has to a list')
         for item in value:
@@ -96,12 +117,14 @@ class SettingSublistValue(SettingsValue):
 class SettingsDirectoryValue(SettingsValue):
     """Check and update a setting value that is a directory path"""
 
-    def check_type_definition(self, value: typing.Any) -> typing.Any:
+    @override
+    def check_type_definition(self, value: t.Any) -> t.Any:
         super().check_type_definition(value)
         if not os.path.isdir(value):
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), value)
 
-    def __call__(self, value: typing.Any) -> typing.Any:
+    @override
+    def __call__(self, value: t.Any) -> t.Any:
         if value == '':
             value = self.default
         return super().__call__(value)
@@ -110,32 +133,54 @@ class SettingsDirectoryValue(SettingsValue):
 class SettingsBytesValue(SettingsValue):
     """str are base64 decoded"""
 
-    def __call__(self, value: typing.Any) -> typing.Any:
+    @override
+    def __call__(self, value: t.Any) -> t.Any:
         if isinstance(value, str):
             value = b64decode(value)
         return super().__call__(value)
 
 
-def apply_schema(settings, schema, path_list):
+def apply_schema(settings: dict[str, t.Any], schema: dict[str, t.Any], path_list: list[str]):
     error = False
     for key, value in schema.items():
-        if isinstance(value, SettingsValue):
+        if isinstance(value, type) and issubclass(value, msgspec.Struct):
+            try:
+                # Type Validation at runtime:
+                # https://jcristharif.com/msgspec/structs.html#type-validation
+                cfg_dict = settings.get(key)
+                if cfg_dict is None:
+                    cfg_dict = {}
+                cfg_json = msgspec.json.encode(cfg_dict)
+                settings[key] = msgspec.json.decode(cfg_json, type=value)
+            except msgspec.ValidationError as e:
+                # To get a more meaningful error message, we need to replace the
+                # `$` by the (doted) name space.  For example if ValidationError
+                # was raised for the field `name` in structure at `foo.bar`:
+                #     Expected `str`, got `int` - at `$.name`
+                # is converted to:
+                #     Expected `str`, got `int` - at `foo.bar.name`
+                msg = str(e)
+                msg = msg.replace("`$.", "`" + ".".join([*path_list, key]) + ".")
+                logger.error(msg)
+                error = True
+        elif isinstance(value, SettingsValue):
             try:
                 settings[key] = value(settings.get(key, _UNDEFINED))
             except Exception as e:  # pylint: disable=broad-except
                 # don't stop now: check other values
-                logger.error('%s: %s', '.'.join([*path_list, key]), e)
+                msg = ".".join([*path_list, key]) + f": {e}"
+                logger.error(msg)
                 error = True
         elif isinstance(value, dict):
             error = error or apply_schema(settings.setdefault(key, {}), schema[key], [*path_list, key])
         else:
             settings.setdefault(key, value)
     if len(path_list) == 0 and error:
-        raise ValueError('Invalid settings.yml')
+        raise ValueError("Invalid settings.yml")
     return error
 
 
-SCHEMA = {
+SCHEMA: dict[str, t.Any] = {
     'general': {
         'debug': SettingsValue(bool, False, 'SEARXNG_DEBUG'),
         'instance_name': SettingsValue(str, 'SearXNG'),
@@ -145,21 +190,14 @@ SCHEMA = {
         'enable_metrics': SettingsValue(bool, True),
         'open_metrics': SettingsValue(str, ''),
     },
-    'brand': {
-        'issue_url': SettingsValue(str, 'https://github.com/searxng/searxng/issues'),
-        'new_issue_url': SettingsValue(str, 'https://github.com/searxng/searxng/issues/new'),
-        'docs_url': SettingsValue(str, 'https://docs.searxng.org'),
-        'public_instances': SettingsValue((False, str), 'https://searx.space'),
-        'wiki_url': SettingsValue((False, str), 'https://github.com/searxng/searxng/wiki'),
-        'custom': SettingsValue(dict, {'links': {}}),
-    },
+    'brand': SettingsBrand,
     'search': {
         'safe_search': SettingsValue((0, 1, 2), 0),
-        'autocomplete': SettingsValue(str, ''),
+        'autocomplete': SettingsValue(str, 'duckduckgo'),
         'autocomplete_min': SettingsValue(int, 4),
         'favicon_resolver': SettingsValue(str, ''),
         'default_lang': SettingsValue(tuple(SXNG_LOCALE_TAGS + ['']), ''),
-        'languages': SettingSublistValue(SXNG_LOCALE_TAGS, SXNG_LOCALE_TAGS),
+        'languages': SettingSublistValue(SXNG_LOCALE_TAGS, SXNG_LOCALE_TAGS),  # type: ignore
         'ban_time_on_fail': SettingsValue(numbers.Real, 5),
         'max_ban_time_on_fail': SettingsValue(numbers.Real, 120),
         'suspended_times': {
@@ -182,7 +220,7 @@ SCHEMA = {
         'base_url': SettingsValue((False, str), False, 'SEARXNG_BASE_URL'),
         'image_proxy': SettingsValue(bool, False, 'SEARXNG_IMAGE_PROXY'),
         'http_protocol_version': SettingsValue(('1.0', '1.1'), '1.0'),
-        'method': SettingsValue(('POST', 'GET'), 'POST', 'SEARXNG_METHOD'),
+        'method': SettingsValue(('POST', 'GET'), 'GET', 'SEARXNG_METHOD'),
         'default_http_headers': SettingsValue(dict, {}),
     },
     # redis is deprecated ..
@@ -202,17 +240,13 @@ SCHEMA = {
         },
         'center_alignment': SettingsValue(bool, False),
         'results_on_new_tab': SettingsValue(bool, False),
-        'advanced_search': SettingsValue(bool, False),
         'query_in_title': SettingsValue(bool, False),
-        'infinite_scroll': SettingsValue(bool, False),
         'cache_url': SettingsValue(str, 'https://web.archive.org/web/'),
         'search_on_category_select': SettingsValue(bool, True),
         'hotkeys': SettingsValue(('default', 'vim'), 'default'),
         'url_formatting': SettingsValue(('pretty', 'full', 'host'), 'pretty'),
     },
-    'preferences': {
-        'lock': SettingsValue(list, []),
-    },
+    "preferences": SettingsPref,
     'outgoing': {
         'useragent_suffix': SettingsValue(str, ''),
         'request_timeout': SettingsValue(numbers.Real, 3.0),
@@ -220,8 +254,6 @@ SCHEMA = {
         'verify': SettingsValue((bool, str), True),
         'max_request_timeout': SettingsValue((None, numbers.Real), None),
         'pool_connections': SettingsValue(int, 100),
-        'pool_maxsize': SettingsValue(int, 10),
-        'keepalive_expiry': SettingsValue(numbers.Real, 5.0),
         # default maximum redirect
         # from https://github.com/psf/requests/blob/8c211a96cdbe9fe320d63d9e1ae15c5c07e179f8/requests/models.py#L55
         'max_redirects': SettingsValue(int, 30),
@@ -234,10 +266,6 @@ SCHEMA = {
         'networks': {},
     },
     'plugins': SettingsValue(dict, {}),
-    'checker': {
-        'off_when_debug': SettingsValue(bool, True, None),
-        'scheduling': SettingsValue((None, dict), None, None),
-    },
     'categories_as_tabs': SettingsValue(dict, CATEGORIES_AS_TABS),
     'engines': SettingsValue(list, []),
     'doi_resolvers': {},
