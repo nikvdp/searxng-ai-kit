@@ -48,6 +48,11 @@ nix build                          # Build ./result/bin/searxng
 Includes Python and runtime dependencies; uses the existing `setup.py` vendoring
 hooks with the pinned upstream SearXNG wheel. No first-run setup required.
 
+Both build paths pin upstream SearXNG `cff884f98b11` (2026-10-29). Upstream build
+failures abort packaging rather than shipping an older vendored copy. Search
+still depends on engine availability; CAPTCHAs and rate limits can block engines.
+`number_of_results` counts retrieved rows, before library/MCP result limits.
+
 ### Install from Source with uv (Advanced)
 
 Use this path when you want to develop the project, inspect the vendored SearXNG
