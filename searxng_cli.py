@@ -22,6 +22,7 @@ import platform
 
 import httpx
 import typer
+from fastapi import Request
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -3509,7 +3510,7 @@ def mcp_server(
 async def run_http_server(mcp_server, host: str, port: int):
     """Run the MCP server over HTTP with JSON-RPC 2.0 and SSE support."""
     try:
-        from fastapi import FastAPI, Request, HTTPException
+        from fastapi import FastAPI, HTTPException
         from fastapi.responses import Response, StreamingResponse
         from fastapi.middleware.cors import CORSMiddleware
         from sse_starlette.sse import EventSourceResponse
