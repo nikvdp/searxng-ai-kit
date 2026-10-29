@@ -30,7 +30,7 @@ dependencies = [
     "mcp>=1.0.0",
     "rich>=14.0.0",
     "sse-starlette>=1.6.0",
-    "typer-slim>=0.16.0",
+    "typer>=0.16.0",
     "uvicorn>=0.24.0",
     "toml>=0.10.2",
     # SearXNG dependencies (auto-generated from wheel METADATA)
