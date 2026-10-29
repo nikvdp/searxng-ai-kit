@@ -37,6 +37,17 @@ chmod +x searxng-ai-kit-*
 ./searxng-ai-kit-* --help
 ```
 
+### Install with Nix
+
+```bash
+nix profile install .              # Install from this checkout
+nix run . -- engines --common       # Run without installing
+nix build                          # Build ./result/bin/searxng
+```
+
+Includes Python and runtime dependencies; uses the existing `setup.py` vendoring
+hooks with the pinned upstream SearXNG wheel. No first-run setup required.
+
 ### Install from Source with uv (Advanced)
 
 Use this path when you want to develop the project, inspect the vendored SearXNG
